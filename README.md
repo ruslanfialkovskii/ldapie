@@ -22,7 +22,7 @@ LDAPie makes LDAP operations more accessible and intuitive with a modern command
 - Secure password handling options
 - Shell completion for Bash, Zsh, and Fish
 - Directory navigation in interactive mode
-- Command history and help system
+- Context-sensitive help system with smart suggestions
 
 ## Quick Start
 
@@ -110,6 +110,29 @@ ldapie modify <host> <dn> [options]
 ldapie delete <host> <dn> [options]
 ldapie rename <host> <dn> <new_rdn> [options]
 ldapie interactive [options]
+```
+
+## Context-Sensitive Help System
+
+LDAPie includes a comprehensive context-sensitive help system that provides smart suggestions based on your current context and command history:
+
+- **Progressive Help**: Type '?' after any partial command to get context-specific help
+- **Command Validation**: Use the `--validate` flag to check and preview commands without execution
+- **Smart Suggestions**: Get intelligent recommendations based on your current operation context
+- **"Did you mean...?"**: Get automatic corrections for mistyped commands
+- **History-Aware Help**: Suggestions are informed by your previous commands and operations
+
+Examples:
+
+```bash
+# Get help for a partial command
+./ldapie search?
+
+# Validate a command without executing it
+./ldapie search ldap.example.com "dc=example,dc=com" --validate
+
+# Get help during interactive mode
+ldapie> search?
 ```
 
 ## Usage Examples

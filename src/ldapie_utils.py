@@ -875,6 +875,17 @@ def start_interactive_session(server, conn, console, base_dn=None):
     from rich.panel import Panel
     from ldap3 import SUBTREE, ALL_ATTRIBUTES
     
+    # Import context-sensitive help components
+    try:
+        from src.help_context import HelpContext, CommandValidator
+        from src.help_overlay import process_help_key, show_help_overlay
+        # Initialize help context
+        help_context = HelpContext()
+        command_validator = CommandValidator(help_context)
+        help_available = True
+    except ImportError:
+        help_available = False
+    
     class LDAPShell(cmd.Cmd):
         intro = "\nWelcome to LDAPie interactive console. Type help or ? to list commands.\n"
         prompt = "ldapie> "
@@ -886,14 +897,121 @@ def start_interactive_session(server, conn, console, base_dn=None):
             self.console = console
             self.base_dn = base_dn or ""
             self.connected = conn is not None and conn.bound
+            self.help_context = HelpContext() if help_available else None
             
             # Update prompt to show current base DN
             self._update_prompt()
+            
+            # Update session state in help context
+            if help_available and self.help_context:
+                self.help_context.update_session_state(
+                    connected=self.connected,
+                    server=self.server,
+                    connection=self.conn,
+                    authenticated=self.connected and self.conn.bound
+                )
         
         def _update_prompt(self):
             base_str = f" [{self.base_dn}]" if self.base_dn else ""
             self.prompt = f"ldapie{base_str}> "
         
+        def cmdloop(self, intro=None):
+            """Override cmdloop to add custom command processing"""
+            while True:
+                try:
+                    # We need to override the input handling for '?' support
+                    if self.cmdqueue:
+                        line = self.cmdqueue.pop(0)
+                    else:
+                        if self.use_rawinput:
+                            try:
+                                # Use our custom input handler
+                                line = self.get_input(self.prompt)
+                            except EOFError:
+                                line = 'EOF'
+                        else:
+                            self.stdout.write(self.prompt)
+                            self.stdout.flush()
+                            line = self.stdin.readline()
+                            if not len(line):
+                                line = 'EOF'
+                            else:
+                                line = line.rstrip('\r\n')
+                                
+                    line = self.precmd(line)
+                    stop = self.onecmd(line)
+                    stop = self.postcmd(stop, line)
+                    if stop:
+                        break
+                except KeyboardInterrupt:
+                    self.console.print("\n[warning]Interrupted[/warning]")
+                except Exception as e:
+                    self.console.print(f"\n[error]Error: {str(e)}[/error]")
+        
+        def get_input(self, prompt):
+            """Custom input handler that supports '?' for context help"""
+            line = input(prompt)
+            if line.endswith('?') and help_available:
+                # Process the help request and show overlay
+                line_without_question = line[:-1].strip()
+                show_help_overlay(line_without_question, self.help_context, self.console)
+                return line_without_question
+            return line
+        
+        def onecmd(self, line):
+            """Override onecmd to add command history and validation"""
+            # Skip empty lines
+            if not line:
+                return False
+                
+            # Add command to help context history
+            if help_available and self.help_context:
+                self.help_context.add_command(line)
+                
+            # Process the command normally
+            return cmd.Cmd.onecmd(self, line)
+        
+        def precmd(self, line):
+            """Process the command line before execution"""
+            return line
+            
+        def postcmd(self, stop, line):
+            """Process the command line after execution"""
+            return stop
+            
+        def do_validate(self, arg):
+            """
+            Validate a command without executing it
+            Usage: validate <command>
+            """
+            if not arg:
+                self.console.print("[error]Please provide a command to validate[/error]")
+                return
+                
+            if not help_available:
+                self.console.print("[error]Command validation is not available[/error]")
+                return
+                
+            result = command_validator.validate_command(arg)
+            
+            if "error" in result:
+                self.console.print(f"[error]Error: {result['error']}[/error]")
+                if "suggestion" in result:
+                    self.console.print(f"[info]Suggestion: {result['suggestion']}[/info]")
+                if "examples" in result:
+                    self.console.print("\n[bold]Examples:[/bold]")
+                    for example in result['examples']:
+                        self.console.print(f"  [command]{example}[/command]")
+            else:
+                if "validation" in result:
+                    self.console.print(f"[success]✓ {result['validation']}[/success]")
+                if "preview" in result:
+                    self.console.print(f"\n[bold]Preview:[/bold] {result['preview']}")
+                if "warning" in result:
+                    self.console.print(f"\n[warning]Warning: {result['warning']}[/warning]")
+                if "suggestion" in result:
+                    self.console.print(f"\n[info]Suggestion: {result['suggestion']}[/info]")
+            
         def do_connect(self, arg):
             """
             Connect to an LDAP server
@@ -935,8 +1053,22 @@ def start_interactive_session(server, conn, console, base_dn=None):
                 # Update command prompt
                 self._update_prompt()
                 
+                # Update help context with connection state
+                if help_available and self.help_context:
+                    self.help_context.update_session_state(
+                        connected=True,
+                        authenticated=username is not None,
+                        server=server,
+                        connection=conn,
+                        ssl_enabled=use_ssl
+                    )
+                
             except Exception as e:
                 self.console.print(f"[error]Connection failed: {e}[/error]")
+                
+                # Update help context with failed connection
+                if help_available and self.help_context:
+                    self.help_context.add_error("connect " + arg, str(e))
         
         def do_base(self, arg):
             """Set the base DN for operations"""
@@ -944,6 +1076,10 @@ def start_interactive_session(server, conn, console, base_dn=None):
                 self.base_dn = arg
                 self._update_prompt()
                 self.console.print(f"[info]Base DN set to: {self.base_dn}[/info]")
+                
+                # Update help context with base DN
+                if help_available and self.help_context:
+                    self.help_context.current_context["base_dn"] = arg
             else:
                 self.console.print(f"[info]Current base DN: {self.base_dn}[/info]")
         
@@ -981,8 +1117,16 @@ def start_interactive_session(server, conn, console, base_dn=None):
                 self.console.print(f"[success]Found {len(self.conn.entries)} entries.[/success]")
                 output_rich(self.conn.entries, self.console)
                 
+                # Update help context with search results
+                if help_available and self.help_context:
+                    self.help_context.update_search_results(self.conn.entries)
+                
             except Exception as e:
                 self.console.print(f"[error]Search failed: {e}[/error]")
+                
+                # Add error to help context
+                if help_available and self.help_context:
+                    self.help_context.add_error("search " + arg, str(e))
         
         def do_info(self, arg):
             """Show information about the connected LDAP server"""
@@ -1021,11 +1165,53 @@ def start_interactive_session(server, conn, console, base_dn=None):
             """Exit the interactive console"""
             return self.do_exit(arg)
             
+        def do_suggest(self, arg):
+            """Show context-aware suggestions based on current state"""
+            if not help_available:
+                self.console.print("[error]Context-sensitive help is not available[/error]")
+                return
+                
+            suggestions = self.help_context.get_suggestions()
+            
+            self.console.print("\n[bold]Context-Aware Suggestions[/bold]")
+            self.console.rule()
+            
+            if suggestions["next_commands"]:
+                self.console.print("\n[bold]Next Steps[/bold]")
+                for suggestion in suggestions["next_commands"]:
+                    self.console.print(f"  [success]• {suggestion}[/success]")
+                    
+            if suggestions["examples"]:
+                self.console.print("\n[bold]Examples[/bold]")
+                for example in suggestions["examples"]:
+                    self.console.print(f"  [command]{example}[/command]")
+                    
+            if suggestions["tips"]:
+                self.console.print("\n[bold]Tips[/bold]")
+                for tip in suggestions["tips"]:
+                    self.console.print(f"  [info]• {tip}[/info]")
+                    
+            if not any([suggestions["next_commands"], suggestions["examples"], suggestions["tips"]]):
+                self.console.print("  No specific suggestions available for current context.")
+            
         def do_help(self, arg):
             """Show help information"""
             if arg:
                 # Show help for specific command
                 super().do_help(arg)
+                
+                # If context help is available, show additional examples and tips
+                if help_available and self.help_context:
+                    cmd_help = self.help_context.get_command_help(arg)
+                    if 'examples' in cmd_help and cmd_help['examples']:
+                        self.console.print("\n[bold]Examples:[/bold]")
+                        for example in cmd_help['examples']:
+                            self.console.print(f"  [command]{example}[/command]")
+                    
+                    if 'common_errors' in cmd_help and cmd_help['common_errors']:
+                        self.console.print("\n[bold]Common Issues:[/bold]")
+                        for tip in cmd_help['common_errors']:
+                            self.console.print(f"  [info]• {tip}[/info]")
             else:
                 # Show general help
                 self.console.print(
@@ -1037,13 +1223,31 @@ def start_interactive_session(server, conn, console, base_dn=None):
                         - search [filter] [attributes...]         Search the directory
                         - info                                   Show server information
                         - schema [objectclass|--attr name]        Browse schema information
+                        - validate <command>                      Validate a command without executing it
+                        - suggest                                 Show context-aware suggestions
                         - help [command]                         Show help for commands
                         - exit, quit                             Exit interactive mode
+                        
+                        TIP: Type '?' after any partial command to get context-sensitive help
                         """,
                         title="LDAPie Interactive Mode Help",
                         expand=False
                     )
                 )
+                
+                # If we have context help available, add context-sensitive suggestions
+                if help_available and self.help_context:
+                    suggestions = self.help_context.get_suggestions()
+                    
+                    if suggestions["next_commands"]:
+                        self.console.print("\n[bold]Suggested Next Steps[/bold]")
+                        for suggestion in suggestions["next_commands"]:
+                            self.console.print(f"  [success]• {suggestion}[/success]")
+                            
+                    if suggestions["tips"]:
+                        self.console.print("\n[bold]Tips[/bold]")
+                        for tip in suggestions["tips"]:
+                            self.console.print(f"  [info]• {tip}[/info]")
     
     # Start the shell
     shell = LDAPShell(server, conn, console, base_dn)
