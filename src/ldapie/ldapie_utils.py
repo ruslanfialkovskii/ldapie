@@ -877,8 +877,8 @@ def start_interactive_session(server, conn, console, base_dn=None):
     
     # Import context-sensitive help components
     try:
-        from src.help_context import HelpContext, CommandValidator
-        from src.help_overlay import process_help_key, show_help_overlay
+        from src.ldapie.help_context import HelpContext, CommandValidator
+        from src.ldapie.help_overlay import show_help_overlay
         # Initialize help context
         help_context = HelpContext()
         command_validator = CommandValidator(help_context)

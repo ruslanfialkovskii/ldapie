@@ -45,12 +45,8 @@ import json
 import ldap3
 from ldap3 import Server, Connection, ALL, ALL_ATTRIBUTES, SUBTREE, BASE, LEVEL
 from ldap3.core.exceptions import LDAPException, LDAPBindError
-import src.ldapie_utils as utils  # Note: Consider renaming this module to ldapie_utils.py for consistency
 
-# Import custom Rich formatter for Click commands
-from src.rich_formatter import add_rich_help_option  # Updated to use absolute import from src
-
-# Define color themes
+# Define color themes before importing other modules to avoid circular imports
 DARK_THEME = {
     "info": "cyan",
     "success": "green",
@@ -82,7 +78,11 @@ LIGHT_THEME = {
 # Get theme from environment or default to dark
 theme_name = os.environ.get("LDAPIE_THEME", "dark").lower()
 theme_colors = LIGHT_THEME if theme_name == "light" else DARK_THEME
-console = Console(theme=Theme(theme_colors)) 
+console = Console(theme=Theme(theme_colors))
+
+# Now import modules that might need the console
+import src.ldapie.ldapie_utils as utils
+from src.ldapie.rich_formatter import add_rich_help_option
 
 class LdapConfig:
     """
@@ -201,7 +201,7 @@ def handle_connection_error(func):
         try:
             # Check if help context is available
             try:
-                from src.help_context import HelpContext
+                from src.ldapie.help_context import HelpContext
                 help_context = HelpContext()
                 help_context_available = True
             except ImportError:
@@ -254,7 +254,7 @@ def cli(install_completion=False, show_completion=False, demo=False):
     """LDAPie - A modern LDAP client"""
     # Import help context for CLI commands
     try:
-        from src.help_context import HelpContext
+        from src.ldapie.help_context import HelpContext
         # Initialize the help context as a singleton
         help_context = HelpContext()
     except ImportError:
@@ -422,7 +422,7 @@ def search_command(
     
     # Update help context with search results if available
     try:
-        from src.help_context import HelpContext
+        from src.ldapie.help_context import HelpContext
         help_context = HelpContext()
         help_context.update_search_results(entries)
         help_context.current_context["base_dn"] = base_dn

@@ -16,7 +16,7 @@ from io import StringIO
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the utility functions to test
-from src import ldapie_utils as utils
+import src.ldapie.ldapie_utils as utils
 
 class TestLdapUtils(unittest.TestCase):
     """Test case for LDAP utility functions"""
@@ -198,7 +198,7 @@ class TestLdapUtils(unittest.TestCase):
             self.assertEqual(password, "secret")
         
         # Test with prompt - patch the module where it's used, not imported
-        with patch('src.ldapie_utils.getpass.getpass', return_value="prompted_secret") as mock_getpass:
+        with patch('src.ldapie.ldapie_utils.getpass.getpass', return_value="prompted_secret") as mock_getpass:
             password = utils.safe_get_password()
             mock_getpass.assert_called_once()
             self.assertEqual(password, "prompted_secret")

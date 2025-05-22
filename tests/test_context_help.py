@@ -20,8 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import from the src directory
 try:
-    from src.help_context import HelpContext, CommandValidator
-    from src.help_overlay import show_help_overlay
+    from src.ldapie.help_context import HelpContext, CommandValidator
+    from src.ldapie.help_overlay import show_help_overlay
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
