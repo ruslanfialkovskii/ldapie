@@ -20,7 +20,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Import mock LDAP server and LDAPie modules
 from tests.mock_ldap import MockLdapServer
-from src import ldapie_utils as utils
+try:
+    import ldapie.ldapie_utils as utils
+except ImportError:
+    import src.ldapie.ldapie_utils as utils
 
 console = Console()
 

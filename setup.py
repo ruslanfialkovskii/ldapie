@@ -82,7 +82,7 @@ setup(
             "ldapie=ldapie.ldapie:cli",
         ],
     },
-    scripts=["ldapie"],
+    # Using entry_points above instead of scripts
     project_urls={
         "Bug Reports": "https://github.com/ruslanfialkovskii/ldapie/issues",
         "Source": "https://github.com/ruslanfialkovskii/ldapie",

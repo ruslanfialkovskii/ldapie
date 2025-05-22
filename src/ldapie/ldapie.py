@@ -81,8 +81,14 @@ theme_colors = LIGHT_THEME if theme_name == "light" else DARK_THEME
 console = Console(theme=Theme(theme_colors))
 
 # Now import modules that might need the console
-import src.ldapie.ldapie_utils as utils
-from src.ldapie.rich_formatter import add_rich_help_option
+try:
+    # Try importing as an installed package
+    import ldapie.ldapie_utils as utils
+    from ldapie.rich_formatter import add_rich_help_option
+except ImportError:
+    # Fall back to development path
+    import src.ldapie.ldapie_utils as utils
+    from src.ldapie.rich_formatter import add_rich_help_option
 
 class LdapConfig:
     """
@@ -201,12 +207,15 @@ def handle_connection_error(func):
         try:
             # Check if help context is available
             try:
-                from src.ldapie.help_context import HelpContext
+                try:
+                    from ldapie.help_context import HelpContext
+                except ImportError:
+                    from src.ldapie.help_context import HelpContext
                 help_context = HelpContext()
                 help_context_available = True
             except ImportError:
                 help_context_available = False
-                
+            
             # Get the command string for error tracking
             import inspect
             func_name = func.__name__
@@ -254,12 +263,15 @@ def cli(install_completion=False, show_completion=False, demo=False):
     """LDAPie - A modern LDAP client"""
     # Import help context for CLI commands
     try:
-        from src.ldapie.help_context import HelpContext
+        try:
+            from ldapie.help_context import HelpContext
+        except ImportError:
+            from src.ldapie.help_context import HelpContext
         # Initialize the help context as a singleton
         help_context = HelpContext()
     except ImportError:
         pass
-        
+    
     # Check for demo flag first
     if demo:
         console.print("[info]Starting the automated LDAPie demo...[/info]")
@@ -422,9 +434,11 @@ def search_command(
     
     # Update help context with search results if available
     try:
-        from src.ldapie.help_context import HelpContext
+        try:
+            from ldapie.help_context import HelpContext
+        except ImportError:
+            from src.ldapie.help_context import HelpContext
         help_context = HelpContext()
-        help_context.update_search_results(entries)
         help_context.current_context["base_dn"] = base_dn
         help_context.current_context["filter"] = filter_query
         help_context.current_context["attributes"] = attributes

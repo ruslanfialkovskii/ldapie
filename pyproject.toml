@@ -10,8 +10,22 @@ requires-python = ">=3.8"
 license = {file = "LICENSE"}
 dynamic = ["version"]
 authors = [
-    {name = "LDAPie Team", email = "author@example.com"}
+    {name = "LDAPie Team", email = "ruslan.fialkovsky@gmail.com"}
 ]
+dependencies = [
+    "ldap3>=2.9,<3.0",
+    "rich>=12.0.0",
+    "click>=7.0",
+    "pydantic>=1.9.0",
+    "typer>=0.6.0",
+    "pyyaml>=6.0",
+    "cryptography>=38.0.0",
+    "python-dotenv>=0.20.0",
+    "python-Levenshtein>=0.20.0"
+]
+
+[project.scripts]
+ldapie = "ldapie.ldapie:cli"
 
 [tool.black]
 line-length = 88
