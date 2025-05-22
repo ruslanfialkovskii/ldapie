@@ -35,6 +35,9 @@ if not version:
 with open("README.md", "r", encoding="utf-8") as f:
     long_description = f.read()
 
+with open("requirements.txt") as f:
+    requirements = f.read().splitlines()
+
 setup(
     name="ldapie",
     version=version,
@@ -47,17 +50,7 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     include_package_data=True,
-    install_requires=[
-        "ldap3>=2.9.0",
-        "rich>=10.0.0",
-        "click>=8.0.0",
-        "pydantic>=1.9.0",
-        "typer>=0.6.0", 
-        "pyyaml>=6.0",
-        "cryptography>=38.0.0",
-        "python-dotenv>=0.20.0",
-        "python-Levenshtein>=0.20.0",
-    ],
+    install_requires=requirements,
     classifiers=[
         "Development Status :: 4 - Beta",
         "Environment :: Console",
@@ -76,9 +69,10 @@ setup(
     python_requires=">=3.8",
     entry_points={
         "console_scripts": [
-            "ldapie=src.ldapie:cli",
+            "ldapie=ldapie.ldapie:cli",
         ],
     },
+    scripts=["ldapie"],
     project_urls={
         "Bug Reports": "https://github.com/ruslanfialkovskii/ldapie/issues",
         "Source": "https://github.com/ruslanfialkovskii/ldapie",
