@@ -199,15 +199,48 @@ def handle_connection_error(func):
     """
     def wrapper(*args, **kwargs):
         try:
-            return func(*args, **kwargs)
+            # Check if help context is available
+            try:
+                from src.help_context import HelpContext
+                help_context = HelpContext()
+                help_context_available = True
+            except ImportError:
+                help_context_available = False
+                
+            # Get the command string for error tracking
+            import inspect
+            func_name = func.__name__
+            command_str = func_name.replace("_command", "")
+            
+            # Execute the function
+            result = func(*args, **kwargs)
+            return result
         except LDAPBindError as e:
-            console.print(f"[error]Authentication failed: {e}[/error]")
+            error_msg = f"Authentication failed: {e}"
+            console.print(f"[error]{error_msg}[/error]")
+            
+            # Record error in help context if available
+            if help_context_available:
+                help_context.add_error(command_str, error_msg)
+                
             sys.exit(1)
         except LDAPException as e:
-            console.print(f"[error]LDAP error: {e}[/error]")
+            error_msg = f"LDAP error: {e}"
+            console.print(f"[error]{error_msg}[/error]")
+            
+            # Record error in help context if available
+            if help_context_available:
+                help_context.add_error(command_str, error_msg)
+                
             sys.exit(1)
         except Exception as e:
-            console.print(f"[error]Error: {e}[/error]")
+            error_msg = f"Error: {e}"
+            console.print(f"[error]{error_msg}[/error]")
+            
+            # Record error in help context if available
+            if help_context_available:
+                help_context.add_error(command_str, error_msg)
+                
             sys.exit(1)
     return wrapper
 
@@ -219,6 +252,14 @@ def handle_connection_error(func):
 @add_rich_help_option
 def cli(install_completion=False, show_completion=False, demo=False):
     """LDAPie - A modern LDAP client"""
+    # Import help context for CLI commands
+    try:
+        from src.help_context import HelpContext
+        # Initialize the help context as a singleton
+        help_context = HelpContext()
+    except ImportError:
+        pass
+        
     # Check for demo flag first
     if demo:
         console.print("[info]Starting the automated LDAPie demo...[/info]")
@@ -378,6 +419,17 @@ def search_command(
     if len(entries) == 0:
         console.print("[warning]No entries found.[/warning]")
         return
+    
+    # Update help context with search results if available
+    try:
+        from src.help_context import HelpContext
+        help_context = HelpContext()
+        help_context.update_search_results(entries)
+        help_context.current_context["base_dn"] = base_dn
+        help_context.current_context["filter"] = filter_query
+        help_context.current_context["attributes"] = attributes
+    except ImportError:
+        pass
     
     console.print(f"[success]Found {len(entries)} entries.[/success]")
     

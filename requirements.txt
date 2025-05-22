@@ -6,3 +6,4 @@ typer>=0.6.0
 pyyaml>=6.0
 cryptography>=38.0.0
 python-dotenv>=0.20.0
+python-Levenshtein>=0.20.0

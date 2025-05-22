@@ -44,16 +44,19 @@ setup(
     author="LDAPie Team",
     author_email="author@example.com",
     url="https://github.com/ruslanfialkovskii/ldapie",
-    packages=find_packages(),
+    packages=find_packages(where="src"),
     package_dir={"": "src"},
-    py_modules=["ldapie", "ldapie_utils", "rich_formatter"],
-    scripts=["ldapie"],
     include_package_data=True,
     install_requires=[
         "ldap3>=2.9.0",
         "rich>=10.0.0",
         "click>=8.0.0",
-        "pyperclip>=1.8.2",
+        "pydantic>=1.9.0",
+        "typer>=0.6.0", 
+        "pyyaml>=6.0",
+        "cryptography>=38.0.0",
+        "python-dotenv>=0.20.0",
+        "python-Levenshtein>=0.20.0",
     ],
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -73,7 +76,7 @@ setup(
     python_requires=">=3.8",
     entry_points={
         "console_scripts": [
-            "ldapie=src.ldapie:cli",  # Updated from ldapcli to ldapie
+            "ldapie=src.ldapie:cli",
         ],
     },
     project_urls={

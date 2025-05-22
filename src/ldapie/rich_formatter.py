@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Rich formatted help for Click commands
+Rich formatted help for Click commands with context-sensitive suggestions
 
 This module provides enhanced formatting of Click command help text using
-the Rich library. It replaces the standard Click help formatter with a more
-visually appealing and structured output that includes color highlighting
-and better organization of command options and arguments.
+the Rich library with context-sensitive suggestions based on the current
+command state and user history. It replaces the standard Click help formatter 
+with a more visually appealing and structured output that includes color 
+highlighting, better organization of command options and arguments, and
+intelligent suggestions based on context.
 
 The module works by replacing Click's standard help option with a custom
-one that renders help text using Rich's styling capabilities. This results
-in more readable and visually appealing help text compared to the standard
-terminal output.
+one that renders help text using Rich's styling capabilities and adds
+contextual help and suggestions from the HelpContext system.
 
 Functions:
     get_command_arguments: Extract positional arguments from a Click command
     format_rich_help: Format help text for a command using Rich
+    format_context_help: Add context-sensitive suggestions to help output
     show_rich_help: Click callback to show help using Rich formatting
     add_rich_help_option: Add a custom --help option to a command
+    show_command_validation: Show validation preview for a command
 
 Example:
     To add rich formatting to a Click command:
@@ -35,6 +38,10 @@ import click
 from rich.console import Console
 from rich.table import Table
 from rich.rule import Rule
+from rich.panel import Panel
+
+# We'll import the help context system when we need it
+# to avoid circular imports
 
 def get_command_arguments(command):
     """
@@ -169,6 +176,61 @@ def format_rich_help(ctx, console=None):
             commands_table.add_row(name, cmd.short_help or '')
             
         console.print(commands_table)
+    
+    # Add context-sensitive help if available
+    try:
+        # Only import when needed to avoid circular imports
+        from src.help_context import HelpContext
+        
+        # Add context-sensitive suggestions
+        format_context_help(ctx, console)
+    except ImportError:
+        # Context-sensitive help not available
+        pass
+
+
+def format_context_help(ctx, console):
+    """
+    Add context-sensitive suggestions to help output based on HelpContext
+    
+    Args:
+        ctx: Click Context object containing the command to format help for
+        console: Rich Console object to use for output
+    """
+    try:
+        from src.help_context import HelpContext
+        
+        help_context = HelpContext()
+        command_name = ctx.command.name if hasattr(ctx.command, 'name') else ''
+        
+        # Get suggestions for the current command
+        if command_name:
+            cmd_help = help_context.get_command_help(command_name)
+            suggestions = help_context.get_suggestions()
+            
+            # Print examples if available
+            if 'examples' in cmd_help and cmd_help['examples']:
+                console.print("\n[bold]Examples[/bold]")
+                console.print(Rule())
+                for example in cmd_help['examples']:
+                    console.print(f"  [command]{example}[/command]")
+            
+            # Print tips if available
+            if 'tips' in suggestions and suggestions['tips']:
+                console.print("\n[bold]Tips[/bold]")
+                console.print(Rule())
+                for tip in suggestions['tips']:
+                    console.print(f"  [info]• {tip}[/info]")
+                    
+            # Print next steps if available
+            if 'next_commands' in suggestions and suggestions['next_commands']:
+                console.print("\n[bold]Next Steps[/bold]")
+                console.print(Rule())
+                for next_cmd in suggestions['next_commands']:
+                    console.print(f"  [success]• {next_cmd}[/success]")
+    except Exception:
+        # Silently fail if context help is not available
+        pass
 
 def show_rich_help(ctx, param, value):
     """
@@ -186,37 +248,77 @@ def show_rich_help(ctx, param, value):
         
     Returns:
         None - Exits the program after displaying help
-        
-    Example:
-        >>> @click.command()
-        >>> @click.option('--help', '-h', is_flag=True, callback=show_rich_help,
-        >>>               expose_value=False, is_eager=True,
-        >>>               help="Show this message and exit.")
-        >>> def my_command():
-        >>>     \"\"\"My command description\"\"\"
-        >>>     pass
-        
-    Note:
-        This function will exit the program after displaying help, as is standard
-        behavior for --help options.
     """
     if value and not ctx.resilient_parsing:
-        # Import console directly from ldapie
-        import sys
-        import os
-        
-        # Get the current file's directory
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        # Add to path if needed
-        if current_dir not in sys.path:
-            sys.path.insert(0, current_dir)
-            
-        # Now import the console
-        from ldapie import console  # Updated from ldapcli to ldapie
+        # Import console from ldapie module
+        from src.ldapie import console
         
         format_rich_help(ctx, console)
         ctx.exit()
+
+
+def show_command_validation(ctx, param, value):
+    """
+    Click callback to show command validation preview.
+    
+    This function is triggered by the --validate flag and shows a preview
+    of what the command would do without actually executing it.
+    
+    Args:
+        ctx: Click Context object for the current command
+        param: Click Parameter object that triggered this callback
+        value: The value of the parameter (True if --validate was specified)
+        
+    Returns:
+        None - Exits the program after displaying validation
+    """
+    if not value or ctx.resilient_parsing:
+        return
+        
+    # Import required components
+    from ldapie import console
+    
+    try:
+        from src.help_context import CommandValidator, HelpContext
+        
+        # Construct the command string from context
+        cmd_path = ctx.command_path
+        cmd_args = ' '.join([f'"{arg}"' if ' ' in arg else arg for arg in ctx.args])
+        cmd_str = f"{cmd_path} {cmd_args}".strip()
+        
+        # Validate the command
+        help_context = HelpContext()
+        validator = CommandValidator(help_context)
+        result = validator.validate_command(cmd_str)
+        
+        # Display validation results
+        console.print("\n[bold]Command Validation[/bold]")
+        console.print(Rule())
+        
+        if "error" in result:
+            console.print(f"[error]Error: {result['error']}[/error]")
+            if "suggestion" in result:
+                console.print(f"[info]Suggestion: {result['suggestion']}[/info]")
+            if "examples" in result:
+                console.print("\n[bold]Examples:[/bold]")
+                for example in result['examples']:
+                    console.print(f"  [command]{example}[/command]")
+        else:
+            if "validation" in result:
+                console.print(f"[success]✓ {result['validation']}[/success]")
+            if "preview" in result:
+                console.print(f"\n[bold]Preview:[/bold] {result['preview']}")
+            if "warning" in result:
+                console.print(f"\n[warning]Warning: {result['warning']}[/warning]")
+            if "suggestion" in result:
+                console.print(f"\n[info]Suggestion: {result['suggestion']}[/info]")
+    except ImportError:
+        console.print("[warning]Command validation is not available.[/warning]")
+    except (ValueError, TypeError, AttributeError) as e:
+        console.print(f"[error]Error during validation: {str(e)}[/error]")
+    
+    ctx.exit()
+
 
 def add_rich_help_option(command):
     """
@@ -248,9 +350,22 @@ def add_rich_help_option(command):
         keep the standard help behavior alongside this, you should use a different
         approach.
     """
+    # Add the --help option
     help_option = click.option(
         '--help', '-h', is_flag=True, expose_value=False,
-        help='Show this message and exit.',
+        is_eager=True, help='Show this message and exit.',
         callback=show_rich_help
     )
-    return help_option(command)
+    
+    # Add the --validate option
+    validate_option = click.option(
+        '--validate', is_flag=True, expose_value=False,
+        is_eager=True, help='Validate command without executing it.',
+        callback=show_command_validation
+    )
+    
+    # Apply both options to the command
+    command = help_option(command)
+    command = validate_option(command)
+    
+    return command
