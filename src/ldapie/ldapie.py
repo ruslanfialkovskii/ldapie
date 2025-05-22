@@ -244,8 +244,8 @@ def handle_connection_error(func):
             sys.exit(1)
     return wrapper
 
-@click.group()
-@click.version_option(version="0.0.1")
+@click.group(name="ldapie")
+@click.version_option(version=__version__)
 @click.option('--install-completion', is_flag=True, help='Install completion for the current shell.')
 @click.option('--show-completion', is_flag=True, help='Show completion for the current shell, to copy it or customize the installation.')
 @click.option('--demo', is_flag=True, help='Run the automated demo with mock LDAP server.')
@@ -767,6 +767,7 @@ def print_help():
     options_table.add_row("--show-completion", "Show completion for the current shell, to copy it or customize the installation.")
     options_table.add_row("--demo", "Run the automated demo with mock LDAP server.")
     options_table.add_row("--help", "Show this message and exit.")
+    options_table.add_row("--version", "Show the version and exit.")
     
     console.print(options_table)
     
@@ -789,6 +790,9 @@ def print_help():
     commands_table.add_row("interactive", "Start interactive LDAP console")
     
     console.print(commands_table)
+    
+    # Additional help message
+    console.print("\n[info]Run 'ldapie COMMAND --help' for more information on a command.[/info]")
 
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "--help":

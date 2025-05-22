@@ -102,6 +102,10 @@ def show_rich_help(ctx: click.Context, param: click.Option, value: bool) -> bool
     # Add [options] placeholder
     usage_parts.append("[OPTIONS]")
     
+    # Check if this is a group with commands to add COMMAND [ARGS]
+    if isinstance(command, click.Group) and command.list_commands(ctx):
+        usage_parts.append("COMMAND [ARGS]...")
+    
     console.print(" ".join(usage_parts))
     
     # Options table
@@ -121,6 +125,25 @@ def show_rich_help(ctx: click.Context, param: click.Option, value: bool) -> bool
         console.print("\n[bold]Options[/bold]")
         console.rule()
         console.print(options_table)
+    
+    # Commands section for groups
+    if isinstance(command, click.Group):
+        commands = command.list_commands(ctx)
+        if commands:
+            commands_table = Table(show_header=False, box=None)
+            commands_table.add_column("Command", style="command")
+            commands_table.add_column("Description")
+            
+            for cmd_name in sorted(commands):
+                cmd = command.get_command(ctx, cmd_name)
+                cmd_help = cmd.get_short_help_str() if cmd else ""
+                commands_table.add_row(cmd_name, cmd_help)
+            
+            console.print("\n[bold]Commands[/bold]")
+            console.rule()
+            console.print(commands_table)
+            
+            console.print("\n[info]Run 'ldapie COMMAND --help' for more information on a command.[/info]")
     
     # Examples
     if command.help:
