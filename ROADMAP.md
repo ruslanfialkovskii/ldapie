@@ -98,8 +98,13 @@ ldapie/
 ### Package Distribution
 
 - [x] Complete PyPI packaging and distribution
-- [ ] Create automated release workflow
-- [ ] Add installation instructions using pip
+- [x] Create automated release workflow
+  - [x] Enhanced with multi-platform Docker builds
+  - [x] Added comprehensive testing across Python versions
+  - [x] Improved changelog management
+  - [x] Added release artifacts generation
+  - [x] Implemented notification system
+- [x] Add installation instructions using pip
 - [ ] Create distribution packages (deb, rpm)
 
 ### Additional Features
@@ -129,7 +134,7 @@ ldapie/
 ### Container Distribution
 
 - [x] Create container images for various platforms
-- [ ] Add container usage documentation
+- [x] Add container usage documentation
 
 ## Project Timeline
 
@@ -149,7 +154,7 @@ ldapie/
 
 ### Phase 3: Distribution & Advanced Features (Current)
 
-- [ ] PyPI packaging
+- [x] PyPI packaging
 - [x] Container distribution
 - [ ] Certificate & SASL authentication
 - [ ] Tab completion in interactive mode
@@ -186,5 +191,4 @@ ldapie/
 1. [ ] Begin PyPI packaging and complete automated tests
 2. [ ] Enhance interactive mode with tab completion
 3. [ ] Add support for additional authentication methods
-4. [ ] Create container distribution and documentation
-5. [ ] Set up CI/CD pipeline for automated releases
+4. [ ] Set up CI/CD pipeline for automated releases

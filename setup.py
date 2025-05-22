@@ -35,8 +35,18 @@ if not version:
 with open("README.md", "r", encoding="utf-8") as f:
     long_description = f.read()
 
-with open("requirements.txt") as f:
-    requirements = f.read().splitlines()
+# Define requirements directly to ensure they're installed
+requirements = [
+    "ldap3>=2.9,<3.0",
+    "rich>=12.0.0",
+    "click>=7.0",
+    "pydantic>=1.9.0",
+    "typer>=0.6.0",
+    "pyyaml>=6.0",
+    "cryptography>=38.0.0",
+    "python-dotenv>=0.20.0",
+    "python-Levenshtein>=0.20.0"
+]
 
 setup(
     name="ldapie",
@@ -45,7 +55,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="LDAPie Team",
-    author_email="author@example.com",
+    author_email="ruslan.fialkovsky@gmail.com",
     url="https://github.com/ruslanfialkovskii/ldapie",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
