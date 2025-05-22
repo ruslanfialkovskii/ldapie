@@ -28,7 +28,7 @@ LDAPie makes LDAP operations more accessible and intuitive with a modern command
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ldapie.git
+git clone https://github.com/ruslanfialkovskii/ldapie.git
 cd ldapie
 
 # Create a virtual environment and install dependencies
