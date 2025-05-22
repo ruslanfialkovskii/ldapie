@@ -25,7 +25,7 @@ setup(
     long_description_content_type="text/markdown",
     author="LDAPie Team",
     author_email="author@example.com",
-    url="https://github.com/username/ldapie",
+    url="https://github.com/ruslanfialkovskii/ldapie",
     packages=find_packages(),
     package_dir={"": "src"},
     py_modules=["ldapie", "ldapie_utils", "rich_formatter"],
@@ -59,8 +59,8 @@ setup(
         ],
     },
     project_urls={
-        "Bug Reports": "https://github.com/username/ldapie/issues",
-        "Source": "https://github.com/username/ldapie",
-        "Documentation": "https://github.com/username/ldapie#readme",
+        "Bug Reports": "https://github.com/ruslanfialkovskii/ldapie/issues",
+        "Source": "https://github.com/ruslanfialkovskii/ldapie",
+        "Documentation": "https://github.com/ruslanfialkovskii/ldapie#readme",
     },
 )

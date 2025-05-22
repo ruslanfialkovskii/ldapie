@@ -4,7 +4,7 @@ FROM python:3.9-slim
 # Add metadata
 LABEL maintainer="LDAPie Project"
 LABEL description="Modern LDAP client command-line interface tool inspired by HTTPie"
-LABEL org.opencontainers.image.source="https://github.com/username/ldapie"
+LABEL org.opencontainers.image.source="https://github.com/ruslanfialkovskii/ldapie"
 
 # Set working directory
 WORKDIR /app
