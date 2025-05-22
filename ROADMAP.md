@@ -74,9 +74,8 @@ ldapie/
   - [x] Filtering by specific attributes
   - [x] Various search scopes (base, one, subtree)
 
-- [ ] **Container Support**
+- [x] **Container Support**
   - [x] Dockerized application
-  - [ ] Simple deployment options
 
 - [x] **Developer Experience**
   - [x] Shell completion for Bash, Zsh, and Fish

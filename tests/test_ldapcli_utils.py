@@ -198,7 +198,7 @@ class TestLdapUtils(unittest.TestCase):
             self.assertEqual(password, "secret")
         
         # Test with prompt - patch the module where it's used, not imported
-        with patch('src.ldapcli_utils.getpass.getpass', return_value="prompted_secret") as mock_getpass:
+        with patch('src.ldapie_utils.getpass.getpass', return_value="prompted_secret") as mock_getpass:
             password = utils.safe_get_password()
             mock_getpass.assert_called_once()
             self.assertEqual(password, "prompted_secret")
