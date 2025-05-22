@@ -67,7 +67,59 @@ jobs:
       - name: Run tests with pytest
         run: pytest --cov=src tests/
 
-  build:
+  build-pip:
+    name: Build Python Package
+    needs: [test]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine wheel
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check package
+        run: twine check dist/*
+        
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: python-package
+          path: dist/
+          retention-days: 7
+
+  publish-pip:
+    name: Publish Python Package to PyPI
+    needs: [build-pip]
+    runs-on: ubuntu-latest
+    if: success() && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download package artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: python-package
+          path: dist/
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip_existing: true
+
+  build-docker:
     name: Build Docker Image
     needs: [test]
     runs-on: ubuntu-latest
@@ -89,7 +141,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: ruslanfialkovskii/ldapie
+          images: ruslanfialkovsky/ldapie
           tags: |
             type=semver,pattern={{version}}
             type=ref,event=branch
@@ -105,9 +157,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  publish:
+  publish-docker:
     name: Publish Docker Image as Latest
-    needs: [build]
+    needs: [build-docker]
     runs-on: ubuntu-latest
     if: success() && startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -128,6 +180,6 @@ jobs:
         with:
           context: .
           push: true
-          tags: ruslanfialkovskii/ldapie:latest
+          tags: ruslanfialkovsky/ldapie:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

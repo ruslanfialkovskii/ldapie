@@ -6,12 +6,30 @@ import os
 import re
 
 # Read the version from the main module
-with open(os.path.join("src", "ldapie.py"), "r") as f:
-    version_match = re.search(r"^__version__ = ['\"]([^'\"]*)['\"]", f.read(), re.M)
-    if version_match:
-        version = version_match.group(1)
-    else:
-        raise RuntimeError("Unable to find version string")
+version_file_paths = [
+    os.path.join("src", "ldapie", "__init__.py"),  # Check if it's in a package
+    os.path.join("src", "ldapie.py"),              # Check original path
+    os.path.join("ldapie", "__init__.py"),         # Check another common location
+    "ldapie.py"                                    # Check root directory
+]
+
+version = None
+for path in version_file_paths:
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                version_match = re.search(r"^__version__ = ['\"]([^'\"]*)['\"]", f.read(), re.M)
+                if version_match:
+                    version = version_match.group(1)
+                    print(f"Found version {version} in {path}")
+                    break
+        except Exception as e:
+            print(f"Error reading {path}: {e}")
+
+if not version:
+    # Default version if not found
+    version = "0.1.0"
+    print(f"Warning: Unable to find version string, using default: {version}")
 
 # Read long description from README
 with open("README.md", "r", encoding="utf-8") as f:
