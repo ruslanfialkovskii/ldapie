@@ -28,7 +28,7 @@ for path in version_file_paths:
 
 if not version:
     # Default version if not found
-    version = "0.1.0"
+    version = "dev"
     print(f"Warning: Unable to find version string, using default: {version}")
 
 # Read long description from README
