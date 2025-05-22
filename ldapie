@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+import sys
+
+# Add the parent directory to the Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from src.ldapie import cli  # Updated from ldapcli to ldapie
+
+if __name__ == "__main__":
+    cli()
