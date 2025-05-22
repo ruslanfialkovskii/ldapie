@@ -50,21 +50,52 @@ The automated demo will showcase all major features of LDAPie using a mock LDAP 
 
 ## Installation
 
-### Option 1: Install from Source
+### Option 1: Install from PyPI
+
+The easiest way to install LDAPie is via pip from PyPI:
+
+```bash
+# Install globally (may require sudo)
+pip install ldapie
+
+# Install in user space
+pip install --user ldapie
+
+# Install in a virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate
+pip install ldapie
+```
+
+After installation, you can use the `ldapie` command directly:
+
+```bash
+# Check if installation was successful
+ldapie --version
+
+# Run the demo to explore features
+ldapie --demo
+```
+
+### Option 2: Install from Source
 
 ```bash
 # Create a virtual environment (optional but recommended)
 python3 -m venv venv
 source venv/bin/activate
 
-# Install the required packages
-pip install -r requirements.txt
+# Clone the repository
+git clone https://github.com/ruslanfialkovskii/ldapie.git
+cd ldapie
 
-# Install in development mode
+# Install from source
+pip install .
+
+# Alternatively, install in development mode
 pip install -e .
 ```
 
-### Option 2: Quick Setup Script
+### Option 3: Quick Setup Script
 
 ```bash
 # Make the wrapper script executable
@@ -74,7 +105,7 @@ chmod +x ldapie
 ./ldapie search localhost "dc=example,dc=com"
 ```
 
-### Option 3: Using Docker
+### Option 4: Using Docker
 
 ```bash
 # Build the Docker image
@@ -83,6 +114,25 @@ docker build -t ldapie .
 # Run using Docker
 docker run -it ldapie search ldap.example.com "dc=example,dc=com"
 ```
+
+### Dependencies
+
+LDAPie requires the following Python packages, which will be automatically installed by pip:
+
+- ldap3 >= 2.9, < 3.0: For LDAP functionality
+- rich >= 12.0.0: For beautiful terminal output
+- click >= 7.0: For command-line interface
+- pydantic >= 1.9.0: For data validation
+- typer >= 0.6.0: For command-line typing
+- pyyaml >= 6.0: For configuration files
+- cryptography >= 38.0.0: For secure connections
+- python-dotenv >= 0.20.0: For environment variables
+- python-Levenshtein >= 0.20.0: For command suggestions
+
+### System Requirements
+
+- Python 3.8 or newer
+- For LDAPS (SSL/TLS) support, OpenSSL libraries may be required
 
 ## Shell Completion
 
@@ -346,10 +396,120 @@ LDAPie supports light and dark themes that can be set through the `--theme` opti
 LDAPIE_THEME=light ./ldapie search ldap.example.com "dc=example,dc=com"
 ```
 
-## Contributing
+## Container Usage
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+LDAPie is available as a Docker container, making it easy to use without installing Python or dependencies on your local machine.
+
+### Prerequisites
+
+- Docker installed on your system
+- Basic knowledge of Docker commands
+
+### Using the Pre-built Container
+
+```bash
+# Pull the latest image from Docker Hub
+docker pull ruslanfialkovskii/ldapie:latest
+
+# Run the help command to verify it works
+docker run --rm ruslanfialkovskii/ldapie:latest --help
+
+# Run the demo to explore LDAPie's features
+docker run --rm ruslanfialkovskii/ldapie:latest --demo
+```
+
+### Running LDAP Commands with the Container
+
+The container can be used just like the regular command-line tool:
+
+```bash
+# Basic LDAP search
+docker run --rm ruslanfialkovskii/ldapie:latest search ldap.example.com "dc=example,dc=com" "(objectClass=*)"
+
+# Search with authentication
+docker run --rm ruslanfialkovskii/ldapie:latest search ldap.example.com "dc=example,dc=com" \
+  "(objectClass=person)" --username "cn=admin,dc=example,dc=com" --password secret
+
+# Output results in JSON format
+docker run --rm ruslanfialkovskii/ldapie:latest search ldap.example.com "dc=example,dc=com" \
+  "(objectClass=person)" --json
+
+# Get server info
+docker run --rm ruslanfialkovskii/ldapie:latest info ldap.example.com
+```
+
+### Using Interactive Mode with the Container
+
+Interactive mode requires some additional Docker parameters:
+
+```bash
+docker run --rm -it ruslanfialkovskii/ldapie:latest interactive
+```
+
+The `-it` flags ensure that Docker allocates a pseudo-TTY and keeps STDIN open, which is necessary for interactive mode to work properly.
+
+### Working with Local Files
+
+To save output to files or read input files, you'll need to mount a volume:
+
+```bash
+# Mount the current directory to /data in the container
+docker run --rm -v $(pwd):/data ruslanfialkovskii/ldapie:latest search ldap.example.com \
+  "dc=example,dc=com" "(objectClass=*)" --output /data/results.json --json
+```
+
+### Building the Container Locally
+
+If you prefer to build the container yourself:
+
+```bash
+# Clone the repository
+git clone https://github.com/ruslanfialkovskii/ldapie.git
+cd ldapie
+
+# Build the image
+docker build -t ldapie .
+
+# Run your local image
+docker run --rm ldapie --help
+```
+
+### Environment Variables
+
+The container supports the following environment variables:
+
+- `LDAPIE_THEME`: Set to "light" or "dark" to control the color theme
+- `LDAPIE_DEFAULT_SERVER`: Default LDAP server hostname
+
+Example:
+
+```bash
+docker run --rm -e LDAPIE_THEME=light ruslanfialkovskii/ldapie:latest --help
+```
+
+### Container Tags
+
+- `latest`: Most recent stable release
+- `dev`: Development version
+- `x.y.z` (e.g., `0.1.1`): Specific version releases
+
+### Resource Considerations
+
+The LDAPie container is lightweight and requires minimal resources. For most operations, the default Docker resource limits are sufficient.
+
+For operations on very large LDAP directories, you may need to increase the memory limit:
+
+```bash
+docker run --rm --memory=512m ruslanfialkovskii/ldapie:latest search ldap.example.com \
+  "dc=example,dc=com" "(objectClass=*)" --page-size 1000
+```
+
+For more detailed information about using LDAPie in containers, see [CONTAINER.md](CONTAINER.md).
+
+## Development and Contributing
+
+For information on setting up a development environment, contributing to the project, and the release process, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 - see the LICENSE file for details.
+This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) file for details.
