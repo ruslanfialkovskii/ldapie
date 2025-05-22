@@ -16,7 +16,10 @@ from io import StringIO
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the utility functions to test
-import src.ldapie.ldapie_utils as utils
+try:
+    import ldapie.ldapie_utils as utils
+except ImportError:
+    import src.ldapie.ldapie_utils as utils
 
 class TestLdapUtils(unittest.TestCase):
     """Test case for LDAP utility functions"""
@@ -197,11 +200,19 @@ class TestLdapUtils(unittest.TestCase):
             mock_getpass.assert_not_called()
             self.assertEqual(password, "secret")
         
-        # Test with prompt - patch the module where it's used, not imported
-        with patch('src.ldapie.ldapie_utils.getpass.getpass', return_value="prompted_secret") as mock_getpass:
-            password = utils.safe_get_password()
-            mock_getpass.assert_called_once()
-            self.assertEqual(password, "prompted_secret")
+        # Test with prompt - patch the module where it's used
+        try:
+            # Try to patch installed package
+            with patch('ldapie.ldapie_utils.getpass.getpass', return_value="prompted_secret") as mock_getpass:
+                password = utils.safe_get_password()
+                mock_getpass.assert_called_once()
+                self.assertEqual(password, "prompted_secret")
+        except ImportError:
+            # Fall back to development path
+            with patch('src.ldapie.ldapie_utils.getpass.getpass', return_value="prompted_secret") as mock_getpass:
+                password = utils.safe_get_password()
+                mock_getpass.assert_called_once()
+                self.assertEqual(password, "prompted_secret")
     
     def test_compare_entries(self):
         """Test comparing two LDAP entries"""

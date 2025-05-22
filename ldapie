@@ -9,11 +9,15 @@ parent_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, parent_dir)
 
 try:
-    # First try to import as if the package is installed
+    # First try to import directly (installed package)
     from ldapie.ldapie import cli
 except ImportError:
-    # Fall back to the development path
-    from src.ldapie.ldapie import cli
+    try:
+        # Try importing as module within package (development)
+        from src.ldapie.ldapie import cli
+    except ImportError:
+        print("Error: Could not import ldapie module. Make sure it's installed or you're running from the correct directory.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     cli()

@@ -31,7 +31,10 @@ def get_console():
     
     # Try to import the console from ldapie first
     try:
-        from src.ldapie.ldapie import console
+        try:
+            from ldapie.ldapie import console
+        except ImportError:
+            from src.ldapie.ldapie import console
         return console
     except (ImportError, AttributeError):
         # If that fails, create a local console

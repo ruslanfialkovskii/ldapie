@@ -24,7 +24,10 @@ from rich.table import Table
 from rich.rule import Rule
 from rich.markdown import Markdown
 
-from src.ldapie.help_context import HelpContext, CommandValidator, COMMAND_PATTERNS
+try:
+    from ldapie.help_context import HelpContext, CommandValidator, COMMAND_PATTERNS
+except ImportError:
+    from src.ldapie.help_context import HelpContext, CommandValidator, COMMAND_PATTERNS
 
 def parse_partial_command(input_text: str) -> Dict[str, Any]:
     """
