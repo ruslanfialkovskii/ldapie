@@ -147,8 +147,8 @@ def compare_entries(
                 # Values are equal
                 table.add_row(
                     attr,
-                    "\\n".join(values1),
-                    "\\n".join(values2),
+                    "\n".join(values1),
+                    "\n".join(values2),
                     "✓ Equal"
                 )
                 equal_count += 1
@@ -156,8 +156,8 @@ def compare_entries(
                 # Values differ
                 table.add_row(
                     attr,
-                    "\\n".join(values1),
-                    "\\n".join(values2),
+                    "\n".join(values1),
+                    "\n".join(values2),
                     "≠ Different"
                 )
                 diff_count += 1
@@ -165,7 +165,7 @@ def compare_entries(
             # Only first entry has this attribute
             table.add_row(
                 attr,
-                "\\n".join(str(v) for v in entry1[attr].values),
+                "\n".join(str(v) for v in entry1[attr].values),
                 "",
                 "! Missing in DN 2"
             )
@@ -175,7 +175,7 @@ def compare_entries(
             table.add_row(
                 attr,
                 "",
-                "\\n".join(str(v) for v in entry2[attr].values),
+                "\n".join(str(v) for v in entry2[attr].values),
                 "! Missing in DN 1"
             )
             missing_count += 1

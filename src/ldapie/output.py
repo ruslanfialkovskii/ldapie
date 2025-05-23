@@ -98,7 +98,7 @@ def output_ldif(entries: List[Any], output_file: Optional[str] = None) -> None:
         
         ldif_lines.append("")  # Empty line between entries
     
-    ldif_text = "\\n".join(ldif_lines)
+    ldif_text = "\n".join(ldif_lines)
     
     if output_file:
         with open(output_file, 'w', encoding='utf-8') as f:  # Added encoding
@@ -289,7 +289,7 @@ def output_rich(entries: List[Any], console: Console, output_file: Optional[str]
                 table.add_row(attr_name, str(values[0]))
             else:
                 # For multi-valued attributes, join with newlines
-                table.add_row(attr_name, "\\n".join(str(v) for v in values))
+                table.add_row(attr_name, "\n".join(str(v) for v in values))
         
         # Create a panel with the DN as title
         panel = Panel(

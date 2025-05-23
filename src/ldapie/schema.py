@@ -69,7 +69,7 @@ def output_server_info_rich(server: Server, console: Console) -> None: # Removed
             control_name = KNOWN_CONTROLS.get(oid, oid) # Use safely imported KNOWN_CONTROLS
             controls.append(f"{control_name}")
         # Ensure controls is a string, not a list
-        controls_str = "\\n".join(controls) if controls else "None"
+        controls_str = "\n".join(controls) if controls else "None"
         table.add_row("Supported Controls", controls_str)
     
     # Add supported extensions
@@ -79,13 +79,13 @@ def output_server_info_rich(server: Server, console: Console) -> None: # Removed
             ext_name = KNOWN_EXTENSIONS.get(oid, oid) # Use safely imported KNOWN_EXTENSIONS
             exts.append(f"{ext_name}")
         # Ensure extensions is a string, not a list
-        exts_str = "\\n".join(exts) if exts else "None"
+        exts_str = "\n".join(exts) if exts else "None"
         table.add_row("Supported Extensions", exts_str)
     
     # Add naming contexts
     if hasattr(server_info, "naming_contexts"):
         # Convert list to string before adding to table
-        contexts_str = "\\n".join(str(ctx) for ctx in server_info.naming_contexts) if server_info.naming_contexts else "None"
+        contexts_str = "\n".join(str(ctx) for ctx in server_info.naming_contexts) if server_info.naming_contexts else "None"
         table.add_row("Naming Contexts", contexts_str)
     
     console.print(table)
@@ -193,17 +193,17 @@ def show_schema(server: Server, object_class: Optional[str], attribute: Optional
         table.add_row("Type", oc_info.type or "")
         
         if oc_info.must_contain:
-            table.add_row("Required Attributes", "\\n".join(sorted(oc_info.must_contain)))
+            table.add_row("Required Attributes", "\n".join(sorted(oc_info.must_contain)))
         else:
             table.add_row("Required Attributes", "None")
             
         if oc_info.may_contain:
-            table.add_row("Optional Attributes", "\\n".join(sorted(oc_info.may_contain)))
+            table.add_row("Optional Attributes", "\n".join(sorted(oc_info.may_contain)))
         else:
             table.add_row("Optional Attributes", "None")
             
         if oc_info.superior:
-            table.add_row("Parent Classes", "\\n".join(sorted(oc_info.superior)))
+            table.add_row("Parent Classes", "\n".join(sorted(oc_info.superior)))
         else:
             table.add_row("Parent Classes", "None")
             
@@ -311,7 +311,7 @@ def format_schema_output(schema_obj: Any) -> str:
         output = []
         for name, obj in schema_obj.items():
             output.append(f"{name}: {obj.description or 'No description'}")
-        return "\\n".join(output)
+        return "\n".join(output)
     else:
         # Format a single schema object
         result = []
@@ -320,4 +320,4 @@ def format_schema_output(schema_obj: Any) -> str:
                 value = getattr(schema_obj, attr)
                 if value is not None:
                     result.append(f"{attr}: {value}")
-        return "\\n".join(result)
+        return "\n".join(result)
