@@ -5,11 +5,8 @@ extension-pkg-whitelist=ldap3,rich
 
 [MESSAGES CONTROL]
 # Disable specific messages (errors, warnings, or notes)
-disable=C0301,  # line-too-long
-        R0903,  # too-few-public-methods
-        R0913,  # too-many-arguments
-        R0914,  # too-many-locals
-        C0103   # invalid-name (for variables that don't follow naming convention)
+disable=C0301  # line-too-long
+
 
 [FORMAT]
 # Maximum line length (default is 100)
