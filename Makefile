@@ -1,4 +1,4 @@
-.PHONY: setup install test demo clean
+.PHONY: setup install test demo clean lint
 
 # Default target
 all: install
@@ -19,6 +19,11 @@ test:
 
 # Run the demo
 demo:
+
+# Run lint checks
+lint:
+	pylint --rcfile=.pylintrc ./src/ldapie
+	pylint --rcfile=.pylintrc ./ldapie
 	python tests/demo.py
 
 # Run the enhanced demo

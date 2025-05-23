@@ -1,0 +1,44 @@
+[MASTER]
+# A comma-separated list of file extensions that should be checked for Python code
+init-hook='import sys; sys.path.append(".")'
+extension-pkg-whitelist=ldap3,rich
+
+[MESSAGES CONTROL]
+# Disable specific messages (errors, warnings, or notes)
+disable=C0301,  # line-too-long
+        R0903,  # too-few-public-methods
+        R0913,  # too-many-arguments
+        R0914,  # too-many-locals
+        C0103   # invalid-name (for variables that don't follow naming convention)
+
+[FORMAT]
+# Maximum line length (default is 100)
+max-line-length=120  # Though C0301 is disabled, this affects other formatting
+
+[BASIC]
+# Good variable names which should always be accepted, separated by a comma
+good-names=i,j,k,ex,Run,_
+
+[TYPECHECK]
+# List of members which are set dynamically and missed by pylint inference system
+generated-members=REQUEST,acl_users,aq_parent,objects,DoesNotExist,id,pk
+
+[DESIGN]
+# Maximum number of arguments for function / method
+max-args=8
+
+[SIMILARITIES]
+# Minimum lines number of a similarity
+min-similarity-lines=10
+
+[IMPORTS]
+# Allow wildcard imports from modules that define __all__
+allow-wildcard-with-all=yes
+
+[CLASSES]
+# List of method names used to declare instance attributes
+defining-attr-methods=__init__,__new__,setUp
+
+[EXCEPTIONS]
+# Exceptions that will emit a warning when caught
+overgeneral-exceptions=builtins.Exception,builtins.BaseException
