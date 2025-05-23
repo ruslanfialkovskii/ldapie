@@ -26,10 +26,9 @@ Usage:
     ldapie interactive [options]
 """
 
-__version__ = "0.1.0"
-
 import os
 import sys
+from . import __version__
 import click
 import getpass
 import json as json_lib  # Renamed to avoid conflicts with parameter names
