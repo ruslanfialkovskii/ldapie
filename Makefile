@@ -15,20 +15,20 @@ install:
 
 # Run tests
 test:
-	pytest
+	python ./tests/test_completion.py
+	python ./tests/test_context_help.py
+	python -m unittest discover -s tests -p "*.py" -v
 
 # Run the demo
 demo:
+	python tests/demo.py
 
 # Run lint checks
 lint:
 	pylint --rcfile=.pylintrc ./src/ldapie
 	pylint --rcfile=.pylintrc ./ldapie
-	python tests/demo.py
-
-# Run the enhanced demo
-demo-enhanced:
-	python tests/enhanced_demo.py
+flake:
+	flake8 src tests
 
 # Install shell completion for zsh
 install-completion-zsh:
@@ -70,10 +70,6 @@ clean:
 dist:
 	python setup.py sdist bdist_wheel
 
-# Check for lint issues
-lint:
-	flake8 src tests
-
 # Format code with Black
 format:
 	black src tests
@@ -89,7 +85,6 @@ help:
 	@echo "  install           - Install the package in development mode"
 	@echo "  test              - Run tests"
 	@echo "  demo              - Run the demo with mock LDAP server"
-	@echo "  demo-enhanced     - Run the enhanced demo with interactive mock LDAP server"
 	@echo "  install-completion - Install shell completion for all supported shells"
 	@echo "  install-completion-zsh - Install shell completion for zsh"
 	@echo "  install-completion-bash - Install shell completion for bash"
