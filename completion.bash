@@ -6,7 +6,7 @@ _ldapie() {
   _init_completion || return
 
   # Available commands
-  local commands="search info compare schema add delete modify rename interactive"
+  local commands="search info compare schema add delete modify rename interactive history"
 
   # Global options
   local global_opts="--help --version --install-completion --show-completion --demo"

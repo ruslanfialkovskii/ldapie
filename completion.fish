@@ -33,6 +33,7 @@ complete -f -c ldapie -n '__fish_ldapie_no_subcommand' -a delete -d 'Delete an e
 complete -f -c ldapie -n '__fish_ldapie_no_subcommand' -a modify -d 'Modify an existing LDAP entry'
 complete -f -c ldapie -n '__fish_ldapie_no_subcommand' -a rename -d 'Rename or move an LDAP entry'
 complete -f -c ldapie -n '__fish_ldapie_no_subcommand' -a interactive -d 'Start interactive LDAP console'
+complete -f -c ldapie -n '__fish_ldapie_no_subcommand' -a history -d 'View command history'
 
 # Global options
 complete -f -c ldapie -n '__fish_ldapie_no_subcommand' -l help -d 'Show help information'

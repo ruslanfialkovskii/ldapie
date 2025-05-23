@@ -3,21 +3,85 @@
 
 import os
 import sys
+import importlib.util
 
 # Add the parent directory to the Python path if running from repository
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, parent_dir)
 
+# Also add src directory
+src_dir = os.path.join(parent_dir, 'src')
+if os.path.exists(src_dir):
+    sys.path.insert(0, src_dir)
+
+# Debug flag for detailed output
+debug_mode = "--debug" in sys.argv
+
+if debug_mode:
+    print("Debug mode enabled")
+    print(f"Current script path: {__file__}")
+    print(f"Current directory: {os.getcwd()}")
+    print(f"sys.path: {sys.path}")
+
+# Try different import strategies
+cli = None
+
+# Method 1: Try to import from standard path (installed package)
 try:
-    # First try to import directly (installed package)
+    if debug_mode: print("Trying import: from ldapie.ldapie import cli")
     from ldapie.ldapie import cli
-except ImportError:
+    if debug_mode: print("Successfully imported from ldapie.ldapie")
+except ImportError as e1:
+    if debug_mode: print(f"Import error 1: {e1}")
+    
+    # Method 2: Try importing as module within package (development)
     try:
-        # Try importing as module within package (development)
+        if debug_mode: print("Trying import: from src.ldapie.ldapie import cli")
         from src.ldapie.ldapie import cli
-    except ImportError:
-        print("Error: Could not import ldapie module. Make sure it's installed or you're running from the correct directory.")
-        sys.exit(1)
+        if debug_mode: print("Successfully imported from src.ldapie.ldapie")
+    except ImportError as e2:
+        if debug_mode: print(f"Import error 2: {e2}")
+        
+        # Method 3: Direct file import using importlib
+        try:
+            script_path = os.path.join(src_dir, 'ldapie', 'ldapie.py')
+            if debug_mode: print(f"Trying direct import from: {script_path}")
+            
+            if os.path.exists(script_path):
+                spec = importlib.util.spec_from_file_location("ldapie.ldapie", script_path)
+                ldapie_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(ldapie_module)
+                cli = getattr(ldapie_module, 'cli')
+                if debug_mode: print("Successfully imported using importlib")
+            else:
+                if debug_mode: print(f"File not found: {script_path}")
+                raise ImportError(f"ldapie.py not found at {script_path}")
+        except Exception as e3:
+            if debug_mode: print(f"Import error 3: {e3}")
+            
+            print("Error: Could not import ldapie module. Make sure it's installed or you're running from the correct directory.")
+            if debug_mode:
+                # List files in relevant directories for debugging
+                print("\nContents of src directory:")
+                if os.path.exists(src_dir):
+                    for item in os.listdir(src_dir):
+                        print(f" - {item}")
+                
+                print("\nContents of src/ldapie directory:")
+                ldapie_dir = os.path.join(src_dir, 'ldapie')
+                if os.path.exists(ldapie_dir):
+                    for item in os.listdir(ldapie_dir):
+                        print(f" - {item}")
+            
+            sys.exit(1)
 
 if __name__ == "__main__":
-    cli()
+    if cli is not None:
+        # Create a context object with debug mode
+        obj = {'DEBUG': debug_mode}
+        
+        # Pass the context object to the CLI
+        cli(obj=obj)
+    else:
+        print("Error: CLI function could not be loaded.")
+        sys.exit(1)
