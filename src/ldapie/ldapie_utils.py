@@ -951,11 +951,21 @@ def start_interactive_session(server, conn, console, base_dn=None):
         def get_input(self, prompt):
             """Custom input handler that supports '?' for context help"""
             line = input(prompt)
-            if line.endswith('?') and help_available:
-                # Process the help request and show overlay
-                line_without_question = line[:-1].strip()
+            
+            # Handle both "command?" and "command ?" formats
+            if help_available and ('?' in line):
+                # Check if it's the "command ?" format with space before question mark
+                if ' ?' in line:
+                    # Normalize by removing the question mark and any trailing whitespace
+                    line_without_question = line.replace(' ?', '').strip()
+                else:
+                    # Handle "command?" format
+                    line_without_question = line.replace('?', '').strip()
+                
                 show_help_overlay(line_without_question, self.help_context, self.console)
-                return line_without_question
+                # Return empty string to prevent executing the command
+                return ""
+            
             return line
         
         def onecmd(self, line):
@@ -1096,10 +1106,20 @@ def start_interactive_session(server, conn, console, base_dn=None):
                 self.console.print("[error]Base DN not set. Use 'base' command to set it.[/error]")
                 return
                 
-            # Parse arguments
-            args = arg.split()
+            # Parse arguments - handle quoted filters correctly
+            import shlex
+            try:
+                args = shlex.split(arg)
+            except ValueError:
+                # Fallback to simple split if shlex fails
+                args = arg.split()
+                
             filter_query = args[0] if args else "(objectClass=*)"
             attributes = args[1:] if len(args) > 1 else ALL_ATTRIBUTES
+            
+            # Remove surrounding quotes if present
+            if filter_query.startswith(("'", '"')) and filter_query.endswith(("'", '"')):
+                filter_query = filter_query[1:-1]
             
             try:
                 self.console.print(f"[info]Searching with filter: {filter_query}[/info]")
@@ -1228,7 +1248,7 @@ def start_interactive_session(server, conn, console, base_dn=None):
                         - help [command]                         Show help for commands
                         - exit, quit                             Exit interactive mode
                         
-                        TIP: Type '?' after any partial command to get context-sensitive help
+                        TIP: Type '?' after any partial command (e.g., 'search?' or 'search ?') to get context-sensitive help
                         """,
                         title="LDAPie Interactive Mode Help",
                         expand=False
