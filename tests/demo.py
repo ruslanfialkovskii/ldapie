@@ -21,9 +21,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # Import mock LDAP server and LDAPie modules
 from tests.mock_ldap import MockLdapServer
 try:
-    import ldapie.ldapie_utils as utils
+    import ldapie.utils as utils
 except ImportError:
-    import src.ldapie.ldapie_utils as utils
+    import src.ldapie.utils as utils
 
 console = Console()
 
@@ -197,7 +197,7 @@ def server_info_demo(server, conn):
     section_header("Server Information")
     display_command("ldapie info ldap.example.com")
     
-    utils.output_server_info_rich(server, conn, console)
+    utils.output_server_info_rich(server, console)
     
     pause_demo()
 

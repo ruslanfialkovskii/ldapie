@@ -7,6 +7,12 @@ This module provides an overlay UI for context-sensitive help that can be
 triggered with the '?' key during command input. It displays relevant
 suggestions, examples, and documentation based on the current command context.
 
+The help overlay can be triggered in two ways:
+- By appending '?' directly to a command: 'search?'
+- By adding a space before '?': 'search ?'
+
+In both cases, only the help is shown, and the command is not executed.
+
 Key functions:
 - show_help_overlay: Display a help overlay based on current input
 - process_help_key: Process the '?' key and determine if help overlay should be shown
@@ -85,10 +91,19 @@ def get_help_for_position(parsed_input: Dict[str, Any], help_context: HelpContex
     
     # If no command yet, show available commands
     if cmd is None:
+        # Show command frequency to suggest most used commands first
+        frequent_commands = sorted(
+            help_context.command_frequency.items(), 
+            key=lambda x: x[1], 
+            reverse=True
+        )[:5]
+        
+        suggestions = list(COMMAND_PATTERNS.keys())
         return {
             "title": "Available Commands",
             "help_text": "Type a command to begin, or use 'help' for more information.",
-            "suggestions": list(COMMAND_PATTERNS.keys())
+            "suggestions": suggestions,
+            "frequent_commands": [cmd for cmd, count in frequent_commands if count > 0]
         }
     
     # Get command help if available
@@ -103,9 +118,64 @@ def get_help_for_position(parsed_input: Dict[str, Any], help_context: HelpContex
         }
     
     # Get help based on argument position
+    args = parsed_input.get("args", [])
     arg_type = parsed_input["current_arg_type"]
     current_index = parsed_input["current_arg_index"]
     
+    # For search command, add more context-specific help
+    if cmd == "search" and len(args) >= 1:
+        host = args[0]
+        
+        # Detect if we're at the host argument
+        if arg_type == "host":
+            # Check recent hosts from history
+            recent_hosts = set()
+            for cmd_str in help_context.command_history:
+                parts = cmd_str.split()
+                if len(parts) > 1 and parts[0] in ["search", "info", "add", "modify", "delete", "rename", "compare", "schema"]:
+                    recent_hosts.add(parts[1])
+            
+            return {
+                "title": "LDAP Host",
+                "help_text": "Enter the LDAP server hostname or IP address.",
+                "examples": list(recent_hosts)[:3] + ["ldap.example.com", "localhost", "192.168.1.100"],
+                "recent_usage": f"You've recently used these hosts: {', '.join(list(recent_hosts)[:3])}" if recent_hosts else None
+            }
+        # If we're at the base_dn argument and have previous searches
+        elif arg_type == "base_dn" and help_context.current_context.get("base_dn"):
+            recent_base_dns = set()
+            for cmd_str in help_context.command_history:
+                parts = cmd_str.split()
+                if len(parts) > 2 and parts[0] in ["search", "add", "modify", "delete", "rename", "compare"]:
+                    recent_base_dns.add(parts[2])
+            
+            return {
+                "title": "Base DN",
+                "help_text": "Enter the base Distinguished Name (DN) for the operation.",
+                "examples": list(recent_base_dns)[:3] + ["dc=example,dc=com", "ou=people,dc=example,dc=com"],
+                "recent_usage": f"Recent base DNs: {', '.join(list(recent_base_dns)[:3])}" if recent_base_dns else None,
+                "tips": ["Enclose the DN in quotes if it contains spaces or special characters"]
+            }
+        # If we're at the filter argument
+        elif arg_type == "filter" and len(args) >= 2:
+            recent_filters = set()
+            for cmd_str in help_context.command_history:
+                parts = cmd_str.split()
+                if len(parts) > 3 and parts[0] == "search":
+                    recent_filters.add(parts[3])
+            
+            return {
+                "title": "LDAP Filter",
+                "help_text": "Enter an LDAP search filter.\nFilters should be enclosed in parentheses.",
+                "examples": list(recent_filters)[:2] + ["(objectClass=*)", "(cn=user*)", "(&(objectClass=person)(mail=*@example.com))"],
+                "tips": [
+                    "Use * as a wildcard: (cn=user*)",
+                    "Combine filters with & (AND) or | (OR): (&(objectClass=person)(cn=admin))",
+                    "Use ! for NOT: (!(objectClass=computer))"
+                ]
+            }
+    
+    # Default basic position-based help
     if arg_type == "host":
         return {
             "title": "LDAP Host",
@@ -125,12 +195,31 @@ def get_help_for_position(parsed_input: Dict[str, Any], help_context: HelpContex
             "examples": ["(objectClass=*)", "(cn=user*)", "(&(objectClass=person)(mail=*@example.com))"]
         }
     
-    # General help for the command
-    return {
+    # General help for the command with additional context-specific information
+    help_info = {
         "title": f"Help for '{cmd}'",
         "help_text": f"Syntax: {cmd_help.get('syntax', '')}",
-        "examples": cmd_help.get("examples", [])
+        "examples": cmd_help.get("examples", []),
+        "tips": cmd_help.get("common_errors", [])
     }
+    
+    # Add command-specific additional help
+    if cmd == "search":
+        help_info["options"] = [
+            "--tree: Display results in a hierarchical tree",
+            "--json: Output results in JSON format",
+            "--ldif: Output results in LDIF format",
+            "-a <attr>: Specify attributes to fetch (can be used multiple times)"
+        ]
+    elif cmd == "modify":
+        help_info["options"] = [
+            "--add <attr>=<value>: Add a value to an attribute",
+            "--replace <attr>=<value>: Replace an attribute value",
+            "--delete <attr>: Delete an entire attribute",
+            "--delete <attr>=<value>: Delete a specific attribute value"
+        ]
+    
+    return help_info
 
 def show_help_overlay(input_text: str, help_context: HelpContext, console: Console, non_interactive: bool = False) -> None:
     """
@@ -161,6 +250,32 @@ def show_help_overlay(input_text: str, help_context: HelpContext, console: Conso
         help_table.add_row(help_info["help_text"])
         help_table.add_row("")
     
+    # Add recent usage if available (specific context)
+    if "recent_usage" in help_info and help_info["recent_usage"]:
+        help_table.add_row(f"[bold magenta]{help_info['recent_usage']}[/bold magenta]")
+        help_table.add_row("")
+    
+    # Add frequently used commands if available
+    if "frequent_commands" in help_info and help_info["frequent_commands"]:
+        help_table.add_row("[bold]Frequently Used Commands:[/bold]")
+        for cmd in help_info["frequent_commands"]:
+            help_table.add_row(f"  [command]{cmd}[/command]")
+        help_table.add_row("")
+        
+    # Add options if available
+    if "options" in help_info and help_info["options"]:
+        help_table.add_row("[bold]Useful Options:[/bold]")
+        for option in help_info["options"]:
+            help_table.add_row(f"  [option]{option}[/option]")
+        help_table.add_row("")
+    
+    # Add tips if available
+    if "tips" in help_info and help_info["tips"]:
+        help_table.add_row("[bold]Tips & Common Issues:[/bold]")
+        for tip in help_info["tips"]:
+            help_table.add_row(f"  [info]• {tip}[/info]")
+        help_table.add_row("")
+    
     # Add examples if available
     if "examples" in help_info and help_info["examples"]:
         help_table.add_row("[bold]Examples:[/bold]")
@@ -178,7 +293,6 @@ def show_help_overlay(input_text: str, help_context: HelpContext, console: Conso
     panel = Panel(
         help_table,
         title="[bold]Context Help[/bold]",
-        subtitle="Press Esc to close",
         border_style="bright_blue"
     )
     
@@ -188,9 +302,8 @@ def show_help_overlay(input_text: str, help_context: HelpContext, console: Conso
     console.print(panel)
     console.print(f"\nCurrent input: [command]{input_text}[/command]")
     
-    # Wait for key press to continue only in interactive mode
-    if not non_interactive:
-        console.input("\nPress Enter to continue...")
+    # No longer wait for user input - auto-dismisses
+    # The actual timeout implementation would be in the calling function
 
 def process_help_key(current_input: str, console: Console) -> None:
     """
@@ -200,36 +313,72 @@ def process_help_key(current_input: str, console: Console) -> None:
         current_input: Current input text from the command line
         console: Rich console for output
     """
-    # Only show help if the input doesn't end with a quoted string
-    if current_input.endswith('?'):
-        # Remove the ? character
-        input_without_question = current_input[:-1].strip()
+    # Check if the input contains a question mark (both "command?" and "command ?" formats)
+    if '?' in current_input:
+        # Remove the ? character and any surrounding whitespace
+        input_without_question = current_input.replace('?', '').strip()
         
         # Get help context
         help_context = HelpContext()
         
-        # Show help overlay
+        # Import necessary modules for auto-dismiss
+        import threading
+        import time
+        
+        # Show help overlay without waiting for input
         show_help_overlay(input_without_question, help_context, console)
         
-        return input_without_question
+        # Set up a timer to auto-dismiss the overlay (in a real application)
+        # This creates a temporary overlay that will be replaced by the main UI after a delay
+        def dismiss_overlay():
+            time.sleep(5)  # Wait for 5 seconds
+            console.clear()
+            console.print(f"[info]Input: [command]{input_without_question}[/command][/info]")
+            
+        # Start the auto-dismiss timer in a non-blocking thread
+        threading.Thread(target=dismiss_overlay, daemon=True).start()
+        
+        # Return empty string to prevent command execution after showing help
+        return ""
     
     return current_input
 
 # For testing
 if __name__ == "__main__":
+    import time
+    import threading
     from rich.console import Console
+    
     console = Console()
     help_context = HelpContext()
     
-    # Test with different inputs
-    test_inputs = [
-        "",
-        "search",
-        "search ldap.example.com",
-        "search ldap.example.com dc=example,dc=com",
-        "unknown",
-        "interactive"
-    ]
-    
-    for test_input in test_inputs:
-        show_help_overlay(test_input, help_context, console)
+    # Test auto-dismiss functionality
+    def test_auto_dismiss():
+        # Test with a single input to demonstrate auto-dismiss
+        test_input = "search ldap.example.com"
+        
+        print("Testing auto-dismiss overlay with input:", test_input)
+        
+        # Get help context
+        help_context = HelpContext()
+        help_context.add_command("search ldap1.example.com dc=example,dc=com")
+        help_context.add_command("search ldap2.example.com ou=people,dc=example,dc=com")
+        
+        # Show help overlay
+        show_help_overlay(test_input, help_context, console, False)
+        
+        # Auto-dismiss after 5 seconds
+        def dismiss():
+            time.sleep(5)  # Wait for 5 seconds
+            console.clear()
+            console.print(f"[info]Overlay auto-dismissed. Input restored: [command]{test_input}[/command][/info]")
+        
+        # Start the auto-dismiss timer
+        dismiss_thread = threading.Thread(target=dismiss, daemon=True)
+        dismiss_thread.start()
+        
+        # Wait for the thread to complete
+        dismiss_thread.join()
+        
+    # Run the test
+    test_auto_dismiss()

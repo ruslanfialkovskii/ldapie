@@ -3,6 +3,8 @@ include README.md
 include ROADMAP.md
 include requirements.txt
 include completion.zsh
+include completion.bash
+include completion.fish
 include Makefile
 include Dockerfile
 include ldapie

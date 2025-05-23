@@ -1,5 +1,5 @@
-# Use Python 3.9 slim as base image
-FROM python:3.9-slim
+# Use Python 3.10 slim as base image
+FROM python:3.10-slim
 
 # Add metadata
 LABEL maintainer="LDAPie Project"

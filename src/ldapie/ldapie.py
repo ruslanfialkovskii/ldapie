@@ -26,24 +26,18 @@ Usage:
     ldapie interactive [options]
 """
 
-__version__ = "0.1.0"
-
 import os
 import sys
+from . import __version__
 import click
 import getpass
-from typing import List, Optional, Dict, Any, Tuple
+import json as json_lib  # Renamed to avoid conflicts with parameter names
+from typing import Optional, Tuple, Dict, Any
+import traceback  # For debug stack traces
 from rich.console import Console
 from rich.theme import Theme
-from rich.style import Style
 from rich.table import Table
-from rich.panel import Panel
-from rich.syntax import Syntax
-from rich.tree import Tree
-from rich import box
-import json
-import ldap3
-from ldap3 import Server, Connection, ALL, ALL_ATTRIBUTES, SUBTREE, BASE, LEVEL
+from ldap3 import Server, Connection, ALL, ALL_ATTRIBUTES, SUBTREE, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE
 from ldap3.core.exceptions import LDAPException, LDAPBindError
 
 # Define color themes before importing other modules to avoid circular imports
@@ -83,12 +77,33 @@ console = Console(theme=Theme(theme_colors))
 # Now import modules that might need the console
 try:
     # Try importing as an installed package
-    import ldapie.ldapie_utils as utils
+    from ldapie import search as search_utils
+    from ldapie import output as output_utils
+    from ldapie import schema as schema_utils
+    from ldapie import entry_operations as entry_utils
+    from ldapie import interactive as interactive_utils
+    from ldapie import utils as general_utils
     from ldapie.rich_formatter import add_rich_help_option
 except ImportError:
     # Fall back to development path
-    import src.ldapie.ldapie_utils as utils
-    from src.ldapie.rich_formatter import add_rich_help_option
+    try:
+        # Try relative imports first (when running as part of a package)
+        from . import search as search_utils
+        from . import output as output_utils
+        from . import schema as schema_utils
+        from . import entry_operations as entry_utils
+        from . import interactive as interactive_utils
+        from . import utils as general_utils
+        from .rich_formatter import add_rich_help_option
+    except (ImportError, ValueError):
+        # Final fallback to fully qualified imports
+        from src.ldapie import search as search_utils
+        from src.ldapie import output as output_utils
+        from src.ldapie import schema as schema_utils
+        from src.ldapie import entry_operations as entry_utils
+        from src.ldapie import interactive as interactive_utils  
+        from src.ldapie import utils as general_utils
+        from src.ldapie.rich_formatter import add_rich_help_option
 
 class LdapConfig:
     """
@@ -203,7 +218,24 @@ def handle_connection_error(func):
         ...     # LDAP operations
         ...     pass
     """
+    import functools
+    
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        # Check if we're in debug mode via click context
+        ctx = click.get_current_context(silent=True)
+        is_debug = False
+        if ctx and hasattr(ctx, 'obj') and isinstance(ctx.obj, dict):
+            is_debug = ctx.obj.get('DEBUG', False)
+        
+        # Get the command string for error tracking before entering try block
+        func_name = func.__name__
+        command_str = func_name.replace("_command", "")
+        
+        # Set up variables outside try block
+        help_context_available = False
+        help_context = None
+        
         try:
             # Check if help context is available
             try:
@@ -215,21 +247,33 @@ def handle_connection_error(func):
                 help_context_available = True
             except ImportError:
                 help_context_available = False
+                if is_debug:
+                    console.print("[bold yellow]DEBUG[/bold yellow]: Could not import HelpContext.")
             
-            # Get the command string for error tracking
-            import inspect
-            func_name = func.__name__
-            command_str = func_name.replace("_command", "")
+            # Debug mode: show function call details
+            if is_debug:
+                console.print(f"[bold blue]DEBUG[/bold blue]: Executing {func.__name__}")
+                console.print(f"[bold blue]DEBUG[/bold blue]: Arguments: {args}")
+                console.print(f"[bold blue]DEBUG[/bold blue]: Keyword arguments: {kwargs}")
             
             # Execute the function
             result = func(*args, **kwargs)
+            
+            if is_debug:
+                console.print(f"[bold blue]DEBUG[/bold blue]: {func.__name__} completed successfully")
+                
             return result
         except LDAPBindError as e:
             error_msg = f"Authentication failed: {e}"
             console.print(f"[error]{error_msg}[/error]")
             
+            # Show stack trace in debug mode
+            if is_debug:
+                console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
+                console.print(traceback.format_exc())
+            
             # Record error in help context if available
-            if help_context_available:
+            if help_context_available and help_context:
                 help_context.add_error(command_str, error_msg)
                 
             sys.exit(1)
@@ -237,17 +281,58 @@ def handle_connection_error(func):
             error_msg = f"LDAP error: {e}"
             console.print(f"[error]{error_msg}[/error]")
             
+            # Show stack trace in debug mode
+            if is_debug:
+                console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
+                console.print(traceback.format_exc())
+            
             # Record error in help context if available
-            if help_context_available:
+            if help_context_available and help_context:
+                help_context.add_error(command_str, error_msg)
+                
+            sys.exit(1)
+        except (ValueError, TypeError, KeyError) as e:
+            # Handle most common operation errors
+            error_msg = f"Operation error ({type(e).__name__}): {e}"
+            console.print(f"[error]{error_msg}[/error]")
+            
+            # Show stack trace in debug mode
+            if is_debug:
+                console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
+                console.print(traceback.format_exc())
+            
+            # Record error in help context if available
+            if help_context_available and help_context:
+                help_context.add_error(command_str, error_msg)
+                
+            sys.exit(1)
+        except (OSError, IOError) as e:
+            # Handle file operation errors
+            error_msg = f"File operation error: {e}"
+            console.print(f"[error]{error_msg}[/error]")
+            
+            # Show stack trace in debug mode
+            if is_debug:
+                console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
+                console.print(traceback.format_exc())
+            
+            # Record error in help context if available
+            if help_context_available and help_context:
                 help_context.add_error(command_str, error_msg)
                 
             sys.exit(1)
         except Exception as e:
-            error_msg = f"Error: {e}"
+            # This is our last resort fallback for unexpected errors
+            error_msg = f"Unexpected error: {e}"
             console.print(f"[error]{error_msg}[/error]")
             
+            # Show stack trace in debug mode
+            if is_debug:
+                console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
+                console.print(traceback.format_exc())
+            
             # Record error in help context if available
-            if help_context_available:
+            if help_context_available and help_context:
                 help_context.add_error(command_str, error_msg)
                 
             sys.exit(1)
@@ -258,9 +343,18 @@ def handle_connection_error(func):
 @click.option('--install-completion', is_flag=True, help='Install completion for the current shell.')
 @click.option('--show-completion', is_flag=True, help='Show completion for the current shell, to copy it or customize the installation.')
 @click.option('--demo', is_flag=True, help='Run the automated demo with mock LDAP server.')
+@click.option('--debug', is_flag=True, help='Enable debug mode for detailed error output.')
 @add_rich_help_option
-def cli(install_completion=False, show_completion=False, demo=False):
+@click.pass_context
+def cli(ctx, install_completion=False, show_completion=False, demo=False, debug=False):
     """LDAPie - A modern LDAP client"""
+    # Set up the context object
+    ctx.ensure_object(dict)
+    ctx.obj['DEBUG'] = debug
+    ctx.obj['DEMO'] = demo
+    
+    if debug:
+        console.print("[bold red]Debug mode enabled.[/bold red]")
     # Import help context for CLI commands
     try:
         try:
@@ -289,7 +383,7 @@ def cli(install_completion=False, show_completion=False, demo=False):
             sys.exit(1)
             
         if shell not in ['bash', 'zsh', 'fish']:
-            console.print(f"[error]Unsupported shell: {shell}[/error]")
+            console.print(f"[error]Unsupported shell: {shell}. Supported shells are: bash, zsh, fish[/error]")
             sys.exit(1)
             
         # Generate completion script
@@ -304,32 +398,83 @@ eval "$(_LDAPIE_COMPLETE={shell}_source ldapie)"
             sys.exit(0)
             
         if install_completion:
-            # Determine the shell config file
-            if shell == 'bash':
-                rcfile = os.path.expanduser('~/.bashrc')
-            elif shell == 'zsh':
-                rcfile = os.path.expanduser('~/.zshrc')
-            elif shell == 'fish':
-                rcfile = os.path.expanduser('~/.config/fish/config.fish')
-                
-            # Check if completion is already installed
+            # Determine file locations and instructions
+            shell_info = {
+                'bash': {
+                    'rcfile': os.path.expanduser('~/.bashrc'),
+                    'completions_dir': os.path.expanduser('~/.bash_completion.d'),
+                    'completion_file': os.path.expanduser('~/.bash_completion.d/ldapie'),
+                    'manual_install': "source ~/.bash_completion.d/ldapie"
+                },
+                'zsh': {
+                    'rcfile': os.path.expanduser('~/.zshrc'),
+                    'completions_dir': os.path.expanduser('~/.zsh/completion'),
+                    'completion_file': os.path.expanduser('~/.zsh/completion/_ldapie'),
+                    'manual_install': "fpath=(~/.zsh/completion $fpath)\nautoload -Uz compinit && compinit"
+                }, 
+                'fish': {
+                    'rcfile': os.path.expanduser('~/.config/fish/config.fish'),
+                    'completions_dir': os.path.expanduser('~/.config/fish/completions'),
+                    'completion_file': os.path.expanduser('~/.config/fish/completions/ldapie.fish'),
+                    'manual_install': "# No additional steps needed for fish"
+                }
+            }
+            
+            info = shell_info[shell]
+            
+            # Create completions directory if it doesn't exist
+            os.makedirs(info['completions_dir'], exist_ok=True)
+            
+            # Write the completion script to the file
             try:
-                with open(rcfile, 'r') as f:
-                    if completion_script.strip() in f.read():
-                        console.print(f"[warning]Completion for {shell} is already installed.[/warning]")
-                        sys.exit(0)
-            except FileNotFoundError:
-                pass
+                # Use the corresponding completion file from the package
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                package_dir = os.path.dirname(script_dir)
                 
-            # Append the completion script to the shell config file
-            try:
-                with open(rcfile, 'a') as f:
-                    f.write(f"\n{completion_script}\n")
-                console.print(f"[success]Completion for {shell} has been installed to {rcfile}[/success]")
-                console.print("[info]Please restart your shell or source the config file.[/info]")
+                # Try to find the completion file in various locations
+                completion_paths = [
+                    os.path.join(script_dir, f"../completion.{shell}"),  # From source
+                    os.path.join(package_dir, f"completion.{shell}"),     # From package
+                    os.path.join(os.path.dirname(package_dir), f"completion.{shell}")  # From parent dir
+                ]
+                
+                found = False
+                for path in completion_paths:
+                    if os.path.exists(path):
+                        with open(path, 'r', encoding='utf-8') as src, open(info['completion_file'], 'w', encoding='utf-8') as dest:
+                            dest.write(src.read())
+                        found = True
+                        break
+                
+                if not found:
+                    # Fall back to the basic completion script if we can't find the file
+                    with open(info['completion_file'], 'w', encoding='utf-8') as f:
+                        f.write(completion_script)
+                
+                console.print(f"[success]Completion for {shell} has been installed to {info['completion_file']}[/success]")
+                
+                # Add to rcfile if this is bash or zsh
+                if shell in ['bash', 'zsh']:
+                    try:
+                        with open(info['rcfile'], 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            
+                        if shell == 'bash' and 'bash_completion.d/ldapie' not in content:
+                            with open(info['rcfile'], 'a', encoding='utf-8') as f:
+                                f.write(f"\n# LDAPie completion\n{info['manual_install']}\n")
+                                
+                        elif shell == 'zsh' and '~/.zsh/completion' not in content:
+                            with open(info['rcfile'], 'a', encoding='utf-8') as f:
+                                f.write(f"\n# LDAPie completion\n{info['manual_install']}\n")
+                    except FileNotFoundError:
+                        # Create the file if it doesn't exist
+                        with open(info['rcfile'], 'w', encoding='utf-8') as f:
+                            f.write(f"\n# LDAPie completion\n{info['manual_install']}\n")
+                
+                console.print("[info]Please restart your shell or source the config file to enable completions.[/info]")
                 sys.exit(0)
             except Exception as e:
-                console.print(f"[error]Failed to install completion: {e}[/error]")
+                console.print(f"[error]Failed to install completion: {str(e)}[/error]")
                 sys.exit(1)
 
 @cli.command("search")
@@ -344,20 +489,22 @@ eval "$(_LDAPIE_COMPLETE={shell}_source ldapie)"
 @click.option("--scope", type=click.Choice(["base", "one", "sub"]), default="sub", help="Search scope")
 @click.option("--limit", type=int, help="Maximum number of entries to return")
 @click.option("--page-size", type=int, help="Page size for paged results")
-@click.option("--json", is_flag=True, help="Output in JSON format")
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format")
 @click.option("--ldif", is_flag=True, help="Output in LDIF format")
 @click.option("--csv", is_flag=True, help="Output in CSV format")
 @click.option("--tree", is_flag=True, help="Display results as a tree")
-@click.option("--output", help="Save results to a file")
+@click.option("--output", "output_file", help="Save results to a file")
 @click.option("--theme", type=click.Choice(["dark", "light"]), help="Color theme")
 @add_rich_help_option
 @handle_connection_error
 def search_command(
     host, base_dn, filter_query, username, password, ssl, port, attrs,
-    scope, limit, page_size, json, ldif, csv, tree, output, theme
+    scope, limit, page_size, json_output, ldif, csv, tree, output_file, theme
 ):
     """
     Search the LDAP directory.
+    
+    Note: The theme parameter is not used in this function but is kept for API consistency.
     
     Performs an LDAP search operation and displays the results in various formats.
     
@@ -411,7 +558,7 @@ def search_command(
     
     if page_size:
         # Use paged search
-        entries = utils.paged_search(
+        entries = search_utils.paged_search(
             conn, base_dn, filter_query, 
             search_scope, attributes, 
             page_size, limit
@@ -448,17 +595,17 @@ def search_command(
     console.print(f"[success]Found {len(entries)} entries.[/success]")
     
     # Handle different output formats
-    if json:
-        utils.output_json(entries, output)
+    if json_output:
+        output_utils.output_json(entries, output_file)
     elif ldif:
-        utils.output_ldif(entries, output)
+        output_utils.output_ldif(entries, output_file)
     elif csv:
-        utils.output_csv(entries, output)
+        output_utils.output_csv(entries, output_file)
     elif tree:
-        utils.output_tree(entries, base_dn, console, output)
+        output_utils.output_tree(entries, base_dn, console, output_file)
     else:
         # Default rich text output
-        utils.output_rich(entries, console, output)
+        output_utils.output_rich(entries, console, output_file)
 
 @cli.command("info")
 @click.argument("host")
@@ -466,10 +613,10 @@ def search_command(
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
-@click.option("--json", is_flag=True, help="Output in JSON format")
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format")
 @add_rich_help_option
 @handle_connection_error
-def info_command(host, username, password, ssl, port, json):
+def info_command(host, username, password, ssl, port, json_output):
     """Show information about LDAP server"""
     
     # Configure LDAP connection
@@ -485,10 +632,10 @@ def info_command(host, username, password, ssl, port, json):
     server, conn = config.get_connection()
     
     # Get server info
-    if json:
-        utils.output_server_info_json(server, conn, console)
+    if json_output:
+        schema_utils.output_server_info_json(server, console)
     else:
-        utils.output_server_info_rich(server, conn, console)
+        schema_utils.output_server_info_rich(server, console)
 
 @cli.command("compare")
 @click.argument("host")
@@ -517,7 +664,7 @@ def compare_command(host, dn1, dn2, username, password, ssl, port, attrs):
     server, conn = config.get_connection()
     
     # Perform comparison
-    utils.compare_entries(conn, dn1, dn2, attrs, console)
+    search_utils.compare_entries(conn, dn1, dn2, attrs, console)
 
 @cli.command("schema")
 @click.argument("host")
@@ -545,7 +692,7 @@ def schema_command(host, object_class, username, password, ssl, port, attr):
     server, conn = config.get_connection()
     
     # Get and display schema information
-    utils.show_schema(server, object_class, attr, console)
+    schema_utils.show_schema(server, object_class, attr, console)
 
 @cli.command("add")
 @click.argument("host")
@@ -556,12 +703,13 @@ def schema_command(host, object_class, username, password, ssl, port, attr):
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("-c", "--class", "object_class", multiple=True, help="Object class for new entry")
 @click.option("-a", "--attr", multiple=True, help="Attribute to add in the format name=value")
-@click.option("--ldif", help="LDIF file containing entry attributes")
-@click.option("--json", help="JSON file containing entry attributes")
+@click.option("--ldif-file", "ldif_file", help="LDIF file containing entry attributes")
+@click.option("--json-file", "json_file", help="JSON file containing entry attributes")
 @add_rich_help_option
 @handle_connection_error
-def add_command(host, dn, username, password, ssl, port, object_class, attr, ldif, json):
+def add_command(host, dn, username, password, ssl, port, object_class, attr, ldif_file, json_file):
     """Add a new entry to the LDAP directory"""
+    # Note: The ldif_file parameter is kept for API consistency but is not implemented in this version
     
     # Configure LDAP connection
     config = LdapConfig(
@@ -583,9 +731,9 @@ def add_command(host, dn, username, password, ssl, port, object_class, attr, ldi
         attributes['objectClass'] = list(object_class)
     
     # Load attributes from JSON file
-    if json:
-        with open(json, 'r') as f:
-            json_data = json.load(f)
+    if json_file:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            json_data = json_lib.load(f)
             for key, value in json_data.items():
                 attributes[key] = value
     
@@ -636,14 +784,15 @@ def delete_command(host, dn, username, password, ssl, port, recursive):
     # Connect to LDAP server
     server, conn = config.get_connection()
     
-    if recursive:
-        utils.delete_recursive(conn, dn, console)
-    else:
-        if conn.delete(dn):
-            console.print(f"[success]Successfully deleted entry: {dn}[/success]")
+    try:
+        if recursive:
+            entry_utils.delete_entry(conn, dn, recursive=True)
         else:
-            console.print(f"[error]Failed to delete entry: {conn.result}[/error]")
-            sys.exit(1)
+            entry_utils.delete_entry(conn, dn, recursive=False)
+        console.print(f"[success]Successfully deleted entry: {dn}[/success]")
+    except Exception as e:
+        console.print(f"[error]Failed to delete entry: {e}[/error]")
+        sys.exit(1)
 
 @cli.command("modify")
 @click.argument("host")
@@ -676,11 +825,11 @@ def modify_command(host, dn, username, password, ssl, port, add, replace, delete
     changes = {}
     
     if file:
-        with open(file, 'r') as f:
-            changes = json.load(f)
+        with open(file, 'r', encoding='utf-8') as f:
+            changes = json_lib.load(f)
     else:
         # Parse attributes
-        changes = utils.parse_modification_attributes(add, replace, delete)
+        changes = general_utils.parse_modification_attributes(add, replace, delete)
         
     if not changes:
         console.print("[error]No changes specified.[/error]")
@@ -721,8 +870,8 @@ def rename_command(host, dn, new_rdn, username, password, ssl, port, delete_old_
     server, conn = config.get_connection()
     
     # Rename entry
-    if conn.modify_dn(dn, new_rdn, delete_old_rdn=delete_old_rdn, new_superior=parent):
-        console.print(f"[success]Successfully renamed entry[/success]")
+    if conn.modify_dn(dn, new_rdn, delete_old_dn=delete_old_rdn, new_superior=parent):
+        console.print("[success]Successfully renamed entry[/success]")
     else:
         console.print(f"[error]Failed to rename entry: {conn.result}[/error]")
         sys.exit(1)
@@ -754,10 +903,10 @@ def interactive_command(host, username, password, ssl, port, base):
         server, conn = config.get_connection()
         
         # Start interactive session with connection
-        utils.start_interactive_session(server, conn, console, base)
+        interactive_utils.start_interactive_session(server, conn, console, base)
     else:
         # Start interactive session without connection
-        utils.start_interactive_session(None, None, console, None)
+        interactive_utils.start_interactive_session(None, None, console, None)
 
 def print_help():
     """
@@ -809,6 +958,7 @@ def print_help():
     console.print("\n[info]Run 'ldapie COMMAND --help' for more information on a command.[/info]")
 
 if __name__ == "__main__":
+    # This handles direct invocation of the script
     if len(sys.argv) == 2 and sys.argv[1] == "--help":
         print_help()  # Use our custom help formatter for top-level help
     elif len(sys.argv) == 2 and sys.argv[1] == "--demo":
@@ -818,7 +968,20 @@ if __name__ == "__main__":
             sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             
             # Import and run the demo
-            from tests.demo import run_demo
+            try:
+                from tests.demo import run_demo
+            except ImportError:
+                # Fall back to direct demo import if tests module isn't found
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                parent_dir = os.path.dirname(os.path.dirname(current_dir))
+                demo_path = os.path.join(parent_dir, 'tests')
+                if os.path.exists(demo_path):
+                    sys.path.insert(0, parent_dir)
+                    from tests.demo import run_demo
+                else:
+                    msg = f"Could not find tests.demo module. Looked in {demo_path}"
+                    raise ImportError(msg) from None  # Using 'from None' to avoid chaining with original exception
+            
             run_demo()
         except Exception as e:
             console.print(f"[error]Error running demo: {e}[/error]")
@@ -826,4 +989,6 @@ if __name__ == "__main__":
     elif len(sys.argv) == 1:
         print_help()  # Use our custom help formatter when no args are provided
     else:
-        cli()  # For all other cases, use Click's CLI
+        # We're running as a standalone script; use click's command-line parsing.
+        # The CLI function will get its own context from Click
+        cli()
