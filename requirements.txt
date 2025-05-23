@@ -7,3 +7,5 @@ pyyaml>=6.0
 cryptography>=38.0.0
 python-dotenv>=0.20.0
 python-Levenshtein>=0.20.0
+mypy>=1.8.0
+types-PyYAML>=6.0.0
