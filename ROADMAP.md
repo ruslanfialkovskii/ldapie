@@ -78,7 +78,10 @@ ldapie/
   - [x] Dockerized application
 
 - [x] **Developer Experience**
-  - [x] Shell completion for Bash, Zsh, and Fish
+  - [x] **Shell completion**
+  - [x] Zsh completion implementation
+  - [x] Bash completion implementation  
+  - [x] Fish completion implementation
   - [x] Comprehensive documentation
   - [x] Modular code structure
 
@@ -113,7 +116,7 @@ ldapie/
 - [ ] Add tab completion in interactive mode
 - [ ] Implement template-based entry creation
 - [ ] Password change operations
-- [ ] Query history and favorites
+- [ ] Query history
 - [x] **Implement context-sensitive help system**
   - [x] Create help context manager to track user state and history
   - [x] Build command analyzer with intent detection and error recognition

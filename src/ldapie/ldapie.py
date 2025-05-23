@@ -289,7 +289,7 @@ def cli(install_completion=False, show_completion=False, demo=False):
             sys.exit(1)
             
         if shell not in ['bash', 'zsh', 'fish']:
-            console.print(f"[error]Unsupported shell: {shell}[/error]")
+            console.print(f"[error]Unsupported shell: {shell}. Supported shells are: bash, zsh, fish[/error]")
             sys.exit(1)
             
         # Generate completion script
@@ -304,32 +304,83 @@ eval "$(_LDAPIE_COMPLETE={shell}_source ldapie)"
             sys.exit(0)
             
         if install_completion:
-            # Determine the shell config file
-            if shell == 'bash':
-                rcfile = os.path.expanduser('~/.bashrc')
-            elif shell == 'zsh':
-                rcfile = os.path.expanduser('~/.zshrc')
-            elif shell == 'fish':
-                rcfile = os.path.expanduser('~/.config/fish/config.fish')
-                
-            # Check if completion is already installed
+            # Determine file locations and instructions
+            shell_info = {
+                'bash': {
+                    'rcfile': os.path.expanduser('~/.bashrc'),
+                    'completions_dir': os.path.expanduser('~/.bash_completion.d'),
+                    'completion_file': os.path.expanduser('~/.bash_completion.d/ldapie'),
+                    'manual_install': "source ~/.bash_completion.d/ldapie"
+                },
+                'zsh': {
+                    'rcfile': os.path.expanduser('~/.zshrc'),
+                    'completions_dir': os.path.expanduser('~/.zsh/completion'),
+                    'completion_file': os.path.expanduser('~/.zsh/completion/_ldapie'),
+                    'manual_install': "fpath=(~/.zsh/completion $fpath)\nautoload -Uz compinit && compinit"
+                }, 
+                'fish': {
+                    'rcfile': os.path.expanduser('~/.config/fish/config.fish'),
+                    'completions_dir': os.path.expanduser('~/.config/fish/completions'),
+                    'completion_file': os.path.expanduser('~/.config/fish/completions/ldapie.fish'),
+                    'manual_install': "# No additional steps needed for fish"
+                }
+            }
+            
+            info = shell_info[shell]
+            
+            # Create completions directory if it doesn't exist
+            os.makedirs(info['completions_dir'], exist_ok=True)
+            
+            # Write the completion script to the file
             try:
-                with open(rcfile, 'r') as f:
-                    if completion_script.strip() in f.read():
-                        console.print(f"[warning]Completion for {shell} is already installed.[/warning]")
-                        sys.exit(0)
-            except FileNotFoundError:
-                pass
+                # Use the corresponding completion file from the package
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                package_dir = os.path.dirname(script_dir)
                 
-            # Append the completion script to the shell config file
-            try:
-                with open(rcfile, 'a') as f:
-                    f.write(f"\n{completion_script}\n")
-                console.print(f"[success]Completion for {shell} has been installed to {rcfile}[/success]")
-                console.print("[info]Please restart your shell or source the config file.[/info]")
+                # Try to find the completion file in various locations
+                completion_paths = [
+                    os.path.join(script_dir, f"../completion.{shell}"),  # From source
+                    os.path.join(package_dir, f"completion.{shell}"),     # From package
+                    os.path.join(os.path.dirname(package_dir), f"completion.{shell}")  # From parent dir
+                ]
+                
+                found = False
+                for path in completion_paths:
+                    if os.path.exists(path):
+                        with open(path, 'r') as src, open(info['completion_file'], 'w') as dest:
+                            dest.write(src.read())
+                        found = True
+                        break
+                
+                if not found:
+                    # Fall back to the basic completion script if we can't find the file
+                    with open(info['completion_file'], 'w') as f:
+                        f.write(completion_script)
+                
+                console.print(f"[success]Completion for {shell} has been installed to {info['completion_file']}[/success]")
+                
+                # Add to rcfile if this is bash or zsh
+                if shell in ['bash', 'zsh']:
+                    try:
+                        with open(info['rcfile'], 'r') as f:
+                            content = f.read()
+                            
+                        if shell == 'bash' and 'bash_completion.d/ldapie' not in content:
+                            with open(info['rcfile'], 'a') as f:
+                                f.write(f"\n# LDAPie completion\n{info['manual_install']}\n")
+                                
+                        elif shell == 'zsh' and '~/.zsh/completion' not in content:
+                            with open(info['rcfile'], 'a') as f:
+                                f.write(f"\n# LDAPie completion\n{info['manual_install']}\n")
+                    except FileNotFoundError:
+                        # Create the file if it doesn't exist
+                        with open(info['rcfile'], 'w') as f:
+                            f.write(f"\n# LDAPie completion\n{info['manual_install']}\n")
+                
+                console.print("[info]Please restart your shell or source the config file to enable completions.[/info]")
                 sys.exit(0)
             except Exception as e:
-                console.print(f"[error]Failed to install completion: {e}[/error]")
+                console.print(f"[error]Failed to install completion: {str(e)}[/error]")
                 sys.exit(1)
 
 @cli.command("search")
