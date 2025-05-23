@@ -4,9 +4,32 @@
 General utility functions for LDAPie.
 """
 
-# This file can be used for any future general-purpose utilities.
+# General purpose utilities for LDAPie
 
 import ldap3 # For parse_modification_attributes
+from ldap3 import Connection # Explicitly import Connection for type hinting
+from typing import Dict, Any, Optional, List
+
+# Re-export commonly used functions from other modules to maintain compatibility
+# with code that imports from ldapie_utils
+try:
+    # Import the functions but don't actually use them here - just re-export
+    from .output import output_json, output_ldif, output_csv, build_tree, output_tree, output_rich
+    from .schema import output_server_info_rich, output_server_info_json, show_schema, get_schema_info
+    from .entry_operations import delete_entry, add_entry, modify_entry
+    from .search import compare_entries, compare_entry
+    
+    __all__ = [
+        'output_json', 'output_ldif', 'output_csv', 'build_tree', 'output_tree', 'output_rich',
+        'output_server_info_rich', 'output_server_info_json', 'show_schema', 'get_schema_info',
+        'delete_entry', 'add_entry', 'modify_entry', 'compare_entries', 'compare_entry',
+        # Utilities defined in this file
+        'parse_ldap_uri', 'validate_search_filter', 'parse_attributes', 'create_connection',
+        'safe_get_password', 'handle_error_response', 'parse_modification_attributes', 'format_output_filename'
+    ]
+except ImportError:
+    # This will be handled by the main script's import error handling
+    pass
 
 def parse_ldap_uri(uri: str):
     """Parses an LDAP URI."""
@@ -83,3 +106,42 @@ def format_output_filename(basename: str, extension: str) -> str:
         return f"{basename}.{extension}"
     # if no extension or ends with a dot, just append
     return f"{basename}.{extension}"
+
+def delete_entry(connection: Connection, entry_dn: str, recursive: bool = False, controls=None) -> bool:
+    """Deletes an LDAP entry. Can recursively delete child entries."""
+    if recursive:
+        connection.search(search_base=entry_dn,
+                          search_filter='(objectClass=*)',
+                          search_scope=ldap3.LEVEL, # Direct children
+                          attributes=['objectClass'], # Minimal attributes
+                          controls=controls)
+        
+        children_dns = [entry.entry_dn for entry in connection.entries]
+        for child_dn in children_dns:
+            delete_entry(connection, child_dn, recursive=True, controls=controls) # Recursive call
+
+    if connection.delete(entry_dn, controls=controls):
+        return True
+    else:
+        error_message = connection.result.get('description', 'Unknown error') if connection.result else 'Unknown error'
+        raise RuntimeError(f"LDAP Delete operation failed for {entry_dn}: {error_message}")
+
+def add_entry(connection: Connection, dn: str, attributes: dict, controls=None) -> bool:
+    """Adds a new LDAP entry."""
+    object_classes = attributes.get("objectClass", [])
+    attrs_for_add = {k: v for k, v in attributes.items() if k != "objectClass"}
+    
+    if connection.add(dn, object_classes, attrs_for_add, controls=controls):
+        return True
+    else:
+        error_message = connection.result.get('description', 'Unknown error') if connection.result else 'Unknown error'
+        raise RuntimeError(f"LDAP Add operation failed for {dn}: {error_message}")
+
+def modify_entry(connection: Connection, dn: str, modifications: dict, controls=None) -> bool:
+    """Modifies an existing LDAP entry."""
+    # The `modifications` dict is expected to be pre-formatted with ldap3.MODIFY_ADD, etc.
+    if connection.modify(dn, modifications, controls=controls):
+        return True
+    else:
+        error_message = connection.result.get('description', 'Unknown error') if connection.result else 'Unknown error'
+        raise RuntimeError(f"LDAP Modify operation failed for {dn}: {error_message}")

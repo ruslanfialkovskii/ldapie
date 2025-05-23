@@ -77,11 +77,39 @@ except ImportError as e1:
 
 if __name__ == "__main__":
     if cli is not None:
-        # Create a context object with debug mode
-        obj = {'DEBUG': debug_mode}
-        
-        # Pass the context object to the CLI
-        cli(obj=obj)
+        # Handle --demo flag directly in the wrapper script
+        if "--demo" in sys.argv:
+            try:
+                # Import the demo module
+                if debug_mode: print("Trying to import and run demo from tests.demo")
+                
+                # First try direct path import
+                demo_path = os.path.join(parent_dir, 'tests', 'demo.py')
+                if debug_mode: print(f"Looking for demo at: {demo_path}")
+                
+                if os.path.exists(demo_path):
+                    if debug_mode: print(f"Found demo at {demo_path}, importing...")
+                    spec = importlib.util.spec_from_file_location("demo", demo_path)
+                    demo_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(demo_module)
+                    run_demo = getattr(demo_module, 'run_demo')
+                    run_demo()
+                else:
+                    if debug_mode: print(f"Demo file not found at {demo_path}")
+                    print("Error: Could not find demo file at expected location.")
+                    sys.exit(1)
+                    
+                sys.exit(0)
+            except Exception as e:
+                if debug_mode: print(f"Failed to run demo: {e}")
+                print(f"Error: Could not run demo module: {str(e)}")
+                sys.exit(1)
+        else:
+            # Create a context object with debug mode
+            obj = {'DEBUG': debug_mode}
+            
+            # Pass the context object to the CLI
+            cli(obj=obj)
     else:
         print("Error: CLI function could not be loaded.")
         sys.exit(1)
