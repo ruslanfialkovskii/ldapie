@@ -44,6 +44,18 @@ flake8 src tests
 pylint src tests
 ```
 
+### Type Checking
+
+LDAPie uses mypy for static type checking:
+
+```bash
+# Run type checking
+make typecheck
+```
+
+See [TYPING.md](TYPING.md) for guidance on fixing type errors and adding type annotations.
+```
+
 ### Release Process
 
 LDAPie uses an automated release workflow built with GitHub Actions.

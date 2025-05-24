@@ -1,4 +1,4 @@
-.PHONY: setup install test demo clean lint
+.PHONY: setup install test demo clean lint flake typecheck
 
 # Default target
 all: install
@@ -29,6 +29,8 @@ lint:
 	pylint --rcfile=.pylintrc ./ldapie
 flake:
 	flake8 src tests
+typecheck:
+	cd src && PYTHONPATH=. mypy --config-file=../mypy.ini ldapie
 
 # Install shell completion for zsh
 install-completion-zsh:
@@ -92,5 +94,7 @@ help:
 	@echo "  clean             - Clean up temporary files and builds"
 	@echo "  dist              - Build distribution packages"
 	@echo "  lint              - Check for lint issues"
+	@echo "  flake             - Run flake8 linting"
+	@echo "  typecheck         - Run mypy type checking"
 	@echo "  format            - Format code with Black"
 	@echo "  docs              - Generate documentation"
