@@ -16,8 +16,8 @@ from rich.panel import Panel
 from getpass import getpass
 
 # Assuming these are in the same directory or accessible via PYTHONPATH
-from .output import output_rich 
-from .schema import output_server_info_rich, show_schema
+from ..ui.output import output_rich 
+from ..operations.schema import output_server_info_rich, show_schema
 
 # Import context-sensitive help components if available
 try:

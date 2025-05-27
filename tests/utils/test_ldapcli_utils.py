@@ -16,29 +16,37 @@ from io import StringIO
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the utility functions to test
-from ldapie.utils import (
+from src.ldapie.utils.parsers import (
     parse_ldap_uri,
     validate_search_filter,
     parse_attributes,
-    create_connection,
+    parse_modification_attributes,
+)
+from src.ldapie.utils.helpers import (
     safe_get_password,
     handle_error_response,
-    parse_modification_attributes, 
     format_output_filename,
 )
-from ldapie.output import (
+from src.ldapie.utils.connection import create_connection
+from src.ldapie.ui.output import (
     format_ldap_entry,
     # format_json, # Not directly tested, but used by format_ldap_entry
     # format_ldif, # Not directly tested, but used by format_ldap_entry
     format_entries_as_csv,
     # convert_to_csv, # Not directly tested, but used by format_entries_as_csv
 )
-from ldapie.entry_operations import (
+from src.ldapie.operations.entry_operations import (
     rename_entry,
-    compare_entry, 
-    get_schema_info, 
     add_entry, 
-    delete_entry, 
+    delete_entry,
+)
+from src.ldapie.operations.search import (
+    compare_entry, 
+)
+from src.ldapie.operations.schema import (
+    get_schema_info,
+)
+from src.ldapie.operations.entry_operations import (
     modify_entry,
 )
 # Removed problematic try/except for module imports as they are now clearly defined.

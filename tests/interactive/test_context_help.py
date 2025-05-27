@@ -20,11 +20,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import from the src directory
 try:
-    from ldapie.help_context import HelpContext, CommandValidator
-    from ldapie.help_overlay import show_help_overlay
+    from src.ldapie.interactive.help_context import HelpContext, CommandValidator
+    from src.ldapie.interactive.help_overlay import show_help_overlay
 except ImportError:
-    from src.ldapie.help_context import HelpContext, CommandValidator
-    from src.ldapie.help_overlay import show_help_overlay
+    from ldapie.interactive.help_context import HelpContext, CommandValidator
+    from ldapie.interactive.help_overlay import show_help_overlay
 
 # Initialize console for output
 console = Console()

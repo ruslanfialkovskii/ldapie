@@ -1,4 +1,4 @@
-.PHONY: setup install test demo clean lint flake typecheck
+.PHONY: setup install test test-coverage test-core test-operations test-interactive test-ui test-utils demo clean lint flake typecheck
 
 # Default target
 all: install
@@ -15,18 +15,35 @@ install:
 
 # Run tests
 test:
-	python ./tests/test_completion.py
-	python ./tests/test_context_help.py
-	python -m unittest discover -s tests -p "*.py" -v
+	python -m pytest tests/ -v
+
+# Run tests with coverage
+test-coverage:
+	python -m pytest tests/ -v --cov=src/ldapie --cov-report=html --cov-report=term
 
 # Run the demo
 demo:
 	python tests/demo.py
 
+# Run specific test modules
+test-core:
+	python -m pytest tests/core/ -v
+
+test-operations:
+	python -m pytest tests/operations/ -v
+
+test-interactive:
+	python -m pytest tests/interactive/ -v
+
+test-ui:
+	python -m pytest tests/ui/ -v
+
+test-utils:
+	python -m pytest tests/utils/ -v
+
 # Run lint checks
 lint:
 	pylint --rcfile=.pylintrc ./src/ldapie
-	pylint --rcfile=.pylintrc ./ldapie
 flake:
 	flake8 src tests
 typecheck:
@@ -62,11 +79,15 @@ clean:
 	rm -rf build/
 	rm -rf dist/
 	rm -rf *.egg-info
+	rm -rf src/*.egg-info
 	rm -rf __pycache__/
 	rm -rf src/__pycache__/
 	rm -rf tests/__pycache__/
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type f -name '*.pyc' -delete
+	rm -rf .pytest_cache/
+	rm -rf .coverage
+	rm -rf htmlcov/
 
 # Build distribution packages
 dist:
@@ -85,7 +106,13 @@ help:
 	@echo "Available targets:"
 	@echo "  setup             - Set up development environment"
 	@echo "  install           - Install the package in development mode"
-	@echo "  test              - Run tests"
+	@echo "  test              - Run all tests"
+	@echo "  test-coverage     - Run tests with coverage report"
+	@echo "  test-core         - Run core module tests"
+	@echo "  test-operations   - Run operations module tests"
+	@echo "  test-interactive  - Run interactive module tests"
+	@echo "  test-ui           - Run UI module tests"
+	@echo "  test-utils        - Run utils module tests"
 	@echo "  demo              - Run the demo with mock LDAP server"
 	@echo "  install-completion - Install shell completion for all supported shells"
 	@echo "  install-completion-zsh - Install shell completion for zsh"

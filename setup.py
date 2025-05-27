@@ -79,7 +79,7 @@ setup(
     python_requires=">=3.8",
     entry_points={
         "console_scripts": [
-            "ldapie=ldapie.ldapie:cli",
+            "ldapie=ldapie.core.ldapie:cli",
         ],
     },
     # Using entry_points above instead of scripts

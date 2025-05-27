@@ -12,11 +12,11 @@ from rich.console import Console
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 try:
-    from ldapie.tab_completion import TabCompletion, QueryHistory
-    from ldapie.shell_enhancements import enhance_shell
+    from src.ldapie.interactive.tab_completion import TabCompletion, QueryHistory
+    from src.ldapie.interactive.shell_enhancements import enhance_shell
 except ImportError:
-    from src.ldapie.tab_completion import TabCompletion, QueryHistory
-    from src.ldapie.shell_enhancements import enhance_shell
+    from ldapie.interactive.tab_completion import TabCompletion, QueryHistory
+    from ldapie.interactive.shell_enhancements import enhance_shell
 
 # Create a console for output
 console = Console()
