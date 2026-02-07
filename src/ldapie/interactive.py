@@ -16,8 +16,9 @@ from rich.panel import Panel
 from getpass import getpass
 
 # Assuming these are in the same directory or accessible via PYTHONPATH
-from .output import output_rich 
+from .output import output_rich
 from .schema import output_server_info_rich, show_schema
+from .utils import validate_search_filter
 
 # Import context-sensitive help components if available
 try:
@@ -256,7 +257,13 @@ class LDAPShell(cmd.Cmd):
         
         if filter_query.startswith(("'", '"')) and filter_query.endswith(("'", '"')):
             filter_query = filter_query[1:-1]
-        
+
+        try:
+            validate_search_filter(filter_query)
+        except ValueError as e:
+            self.console.print(f"[error]Invalid LDAP filter: {e}[/error]")
+            return
+
         try:
             self.console.print(f"[info]Searching with filter: {filter_query}[/info]")
             self.conn.search(
@@ -295,7 +302,7 @@ class LDAPShell(cmd.Cmd):
         if not self.connected or not self.server or not self.conn:
             self.console.print("[error]Not connected to any LDAP server[/error]")
             return
-        output_server_info_rich(self.server, self.conn, self.console)
+        output_server_info_rich(self.server, self.console)
     
     def do_schema(self, arg: str) -> None:
         """

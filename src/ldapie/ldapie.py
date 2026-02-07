@@ -540,9 +540,16 @@ def search_command(
         port=port
     )
     
+    # Validate search filter
+    try:
+        general_utils.validate_search_filter(filter_query)
+    except ValueError as e:
+        console.print(f"[error]Invalid LDAP filter: {e}[/error]")
+        sys.exit(1)
+
     # Connect to LDAP server
     server, conn = config.get_connection()
-    
+
     # Determine search scope
     search_scope = {
         "base": BASE,
@@ -650,7 +657,14 @@ def info_command(host, username, password, ssl, port, json_output):
 @handle_connection_error
 def compare_command(host, dn1, dn2, username, password, ssl, port, attrs):
     """Compare two LDAP entries"""
-    
+    # Validate DNs
+    for dn_val in (dn1, dn2):
+        try:
+            general_utils.validate_dn(dn_val)
+        except ValueError as e:
+            console.print(f"[error]Invalid DN: {e}[/error]")
+            sys.exit(1)
+
     # Configure LDAP connection
     config = LdapConfig(
         host=host,
@@ -709,8 +723,13 @@ def schema_command(host, object_class, username, password, ssl, port, attr):
 @handle_connection_error
 def add_command(host, dn, username, password, ssl, port, object_class, attr, ldif_file, json_file):
     """Add a new entry to the LDAP directory"""
-    # Note: The ldif_file parameter is kept for API consistency but is not implemented in this version
-    
+    # Validate DN
+    try:
+        general_utils.validate_dn(dn)
+    except ValueError as e:
+        console.print(f"[error]Invalid DN: {e}[/error]")
+        sys.exit(1)
+
     # Configure LDAP connection
     config = LdapConfig(
         host=host,
@@ -771,7 +790,13 @@ def add_command(host, dn, username, password, ssl, port, object_class, attr, ldi
 @handle_connection_error
 def delete_command(host, dn, username, password, ssl, port, recursive):
     """Delete an entry from the LDAP directory"""
-    
+    # Validate DN
+    try:
+        general_utils.validate_dn(dn)
+    except ValueError as e:
+        console.print(f"[error]Invalid DN: {e}[/error]")
+        sys.exit(1)
+
     # Configure LDAP connection
     config = LdapConfig(
         host=host,
@@ -809,7 +834,13 @@ def delete_command(host, dn, username, password, ssl, port, recursive):
 @handle_connection_error
 def modify_command(host, dn, username, password, ssl, port, add, replace, delete, file):
     """Modify an existing LDAP entry"""
-    
+    # Validate DN
+    try:
+        general_utils.validate_dn(dn)
+    except ValueError as e:
+        console.print(f"[error]Invalid DN: {e}[/error]")
+        sys.exit(1)
+
     # Configure LDAP connection
     config = LdapConfig(
         host=host,
@@ -856,7 +887,13 @@ def modify_command(host, dn, username, password, ssl, port, add, replace, delete
 @handle_connection_error
 def rename_command(host, dn, new_rdn, username, password, ssl, port, delete_old_rdn, parent):
     """Rename or move an LDAP entry"""
-    
+    # Validate DN
+    try:
+        general_utils.validate_dn(dn)
+    except ValueError as e:
+        console.print(f"[error]Invalid DN: {e}[/error]")
+        sys.exit(1)
+
     # Configure LDAP connection
     config = LdapConfig(
         host=host,

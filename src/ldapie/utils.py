@@ -6,8 +6,9 @@ General utility functions for LDAPie.
 
 # General purpose utilities for LDAPie
 
-import ldap3 # For parse_modification_attributes
-from ldap3 import Connection # Explicitly import Connection for type hinting
+import ldap3  # For parse_modification_attributes
+from ldap3 import Connection  # Explicitly import Connection for type hinting
+from ldap3.utils.dn import parse_dn
 from typing import Dict, Any, Optional, List
 
 # Re-export commonly used functions from other modules to maintain compatibility
@@ -18,41 +19,149 @@ try:
     from .schema import output_server_info_rich, output_server_info_json, show_schema, get_schema_info
     from .entry_operations import delete_entry, add_entry, modify_entry
     from .search import compare_entries, compare_entry
-    
+
     __all__ = [
         'output_json', 'output_ldif', 'output_csv', 'build_tree', 'output_tree', 'output_rich',
         'output_server_info_rich', 'output_server_info_json', 'show_schema', 'get_schema_info',
         'delete_entry', 'add_entry', 'modify_entry', 'compare_entries', 'compare_entry',
         # Utilities defined in this file
-        'parse_ldap_uri', 'validate_search_filter', 'parse_attributes', 'create_connection',
+        'validate_search_filter', 'validate_dn', 'parse_attributes',
         'safe_get_password', 'handle_error_response', 'parse_modification_attributes', 'format_output_filename'
     ]
 except ImportError:
     # This will be handled by the main script's import error handling
     pass
 
-def parse_ldap_uri(uri: str):
-    """Parses an LDAP URI."""
-    # Placeholder implementation
-    raise NotImplementedError("parse_ldap_uri is not yet implemented")
 
-def validate_search_filter(filter_str: str):
-    """Validates an LDAP search filter."""
-    # Placeholder implementation
-    # For now, assume all filters are valid
-    _ = filter_str # Mark as used
+def validate_search_filter(filter_str: str) -> bool:
+    """Validates an LDAP search filter per RFC 4515 structure.
+
+    Checks balanced parentheses, enclosing parens, valid operators,
+    and compound operators (&, |, !).
+
+    Raises:
+        ValueError: If the filter is structurally invalid.
+
+    Returns:
+        True if the filter is valid.
+    """
+    if not filter_str:
+        raise ValueError("Filter cannot be empty")
+
+    stripped = filter_str.strip()
+    if not stripped.startswith("(") or not stripped.endswith(")"):
+        raise ValueError("Filter must be enclosed in parentheses")
+
+    # Check balanced parentheses
+    depth = 0
+    for ch in stripped:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if depth < 0:
+            raise ValueError("Unbalanced parentheses: unexpected ')'")
+    if depth != 0:
+        raise ValueError("Unbalanced parentheses: missing ')'")
+
+    # Validate inner content recursively
+    _validate_filter_node(stripped)
+
     return True
+
+
+def _validate_filter_node(node: str) -> None:
+    """Recursively validate a single filter node."""
+    # Strip outer parens
+    if node.startswith("(") and node.endswith(")"):
+        inner = node[1:-1]
+    else:
+        raise ValueError(f"Filter component must be enclosed in parentheses: {node}")
+
+    if not inner:
+        raise ValueError("Empty filter component '()'")
+
+    # Compound operators: &, |, !
+    if inner[0] in ("&", "|"):
+        # Must have at least one sub-filter
+        sub_filters = _extract_sub_filters(inner[1:])
+        if not sub_filters:
+            raise ValueError(f"Compound operator '{inner[0]}' requires at least one sub-filter")
+        for sf in sub_filters:
+            _validate_filter_node(sf)
+        return
+
+    if inner[0] == "!":
+        sub_filters = _extract_sub_filters(inner[1:])
+        if len(sub_filters) != 1:
+            raise ValueError("NOT operator '!' requires exactly one sub-filter")
+        _validate_filter_node(sub_filters[0])
+        return
+
+    # Simple filter: must contain an operator (=, >=, <=, ~=)
+    if inner.startswith("("):
+        # Nested parens without operator — could be a sub-filter group
+        sub_filters = _extract_sub_filters(inner)
+        for sf in sub_filters:
+            _validate_filter_node(sf)
+        return
+
+    # Check for valid comparison operators
+    if ">=" in inner or "<=" in inner or "~=" in inner or "=" in inner:
+        return
+
+    raise ValueError(f"Invalid filter item (missing operator): ({inner})")
+
+
+def _extract_sub_filters(s: str) -> List[str]:
+    """Extract parenthesized sub-filter strings from a compound filter body."""
+    filters: List[str] = []
+    s = s.strip()
+    i = 0
+    while i < len(s):
+        if s[i] == "(":
+            depth = 0
+            start = i
+            while i < len(s):
+                if s[i] == "(":
+                    depth += 1
+                elif s[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        filters.append(s[start:i + 1])
+                        i += 1
+                        break
+                i += 1
+            else:
+                raise ValueError("Unbalanced parentheses in sub-filter")
+        else:
+            i += 1
+    return filters
+
+
+def validate_dn(dn: str) -> bool:
+    """Validates a Distinguished Name using ldap3's parse_dn.
+
+    Raises:
+        ValueError: If the DN is malformed.
+
+    Returns:
+        True if the DN is valid.
+    """
+    if not dn or not dn.strip():
+        raise ValueError("DN cannot be empty")
+    try:
+        parse_dn(dn)
+    except Exception as e:
+        raise ValueError(f"Invalid DN '{dn}': {e}") from e
+    return True
+
 
 def parse_attributes(attributes_str: str | None):
     """Parses a string of comma-separated attributes."""
     if not attributes_str:
         return []
     return [attr.strip() for attr in attributes_str.split(',')]
-
-def create_connection(ldap_uri: str, bind_dn: str | None = None, password: str | None = None, sasl_mechanism: str | None = None):
-    """Creates an LDAP connection."""
-    # Placeholder implementation
-    raise NotImplementedError("create_connection is not yet implemented")
 
 def safe_get_password(prompt: str = "Password: "):
     """Safely gets a password from the user."""

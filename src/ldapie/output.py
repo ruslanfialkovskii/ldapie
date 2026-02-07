@@ -16,6 +16,52 @@ from rich.tree import Tree
 from rich import box
 from ldap3.utils.dn import parse_dn
 
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return f"base64:{base64.b64encode(value).decode('ascii')}"
+    return value
+
+def _ldif_needs_base64(value: str) -> bool:
+    if not value:
+        return False
+    if value[0] in (" ", ":", "<"):
+        return True
+    for ch in value:
+        if ch in ("\n", "\r") or ord(ch) < 0x20 or ord(ch) >= 0x7f:
+            return True
+    return False
+
+def _ldif_value_line(attr_name: str, value: Any) -> str:
+    if isinstance(value, bytes):
+        b64_value = base64.b64encode(value).decode("ascii")
+        return f"{attr_name}:: {b64_value}"
+    str_value = str(value)
+    if _ldif_needs_base64(str_value):
+        b64_value = base64.b64encode(str_value.encode("utf-8")).decode("ascii")
+        return f"{attr_name}:: {b64_value}"
+    return f"{attr_name}: {str_value}"
+
+def _split_dn(dn: str) -> List[str]:
+    parts: List[str] = []
+    buf: List[str] = []
+    escape = False
+    for ch in dn:
+        if escape:
+            buf.append(ch)
+            escape = False
+            continue
+        if ch == "\\":
+            buf.append(ch)
+            escape = True
+            continue
+        if ch == ",":
+            parts.append("".join(buf).strip())
+            buf = []
+            continue
+        buf.append(ch)
+    parts.append("".join(buf).strip())
+    return [part for part in parts if part]
+
 def output_json(entries: List[Any], output_file: Optional[str] = None) -> None:
     """
     Output LDAP entries as JSON.
@@ -41,10 +87,12 @@ def output_json(entries: List[Any], output_file: Optional[str] = None) -> None:
         for attr_name in entry.entry_attributes:
             if len(entry[attr_name].values) == 1:
                 # Single value
-                entry_dict[attr_name] = entry[attr_name].value
+                entry_dict[attr_name] = _json_safe_value(entry[attr_name].value)
             else:
                 # Multi-value
-                entry_dict[attr_name] = list(entry[attr_name].values)
+                entry_dict[attr_name] = [
+                    _json_safe_value(value) for value in entry[attr_name].values
+                ]
         json_entries.append(entry_dict)
     
     # Output JSON
@@ -84,17 +132,7 @@ def output_ldif(entries: List[Any], output_file: Optional[str] = None) -> None:
         
         for attr_name in sorted(entry.entry_attributes):
             for value in entry[attr_name].values:
-                if isinstance(value, bytes):
-                    # Base64 encode binary values
-                    b64_value = base64.b64encode(value).decode('ascii')
-                    ldif_lines.append(f"{attr_name}:: {b64_value}")
-                else:
-                    # Handle special characters in value
-                    str_value = str(value)
-                    if str_value.startswith(' ') or str_value.startswith(':') or str_value.startswith('<'):
-                        ldif_lines.append(f"{attr_name}: {str_value}")
-                    else:
-                        ldif_lines.append(f"{attr_name}: {str_value}")
+                ldif_lines.append(_ldif_value_line(attr_name, value))
         
         ldif_lines.append("")  # Empty line between entries
     
@@ -197,7 +235,8 @@ def build_tree(entries: List[Any], base_dn: str) -> Tree:
             continue
             
         # Find parent DN
-        parent_dn = ",".join(dn.split(",")[1:])
+        dn_parts = _split_dn(dn)
+        parent_dn = ",".join(dn_parts[1:]) if len(dn_parts) > 1 else base_dn
         
         # If we don't have the parent, use the base or nearest ancestor
         if parent_dn not in tree_nodes:
@@ -205,7 +244,8 @@ def build_tree(entries: List[Any], base_dn: str) -> Tree:
             
         # Add this entry to its parent
         if parent_dn in tree_nodes:
-            entry_node = tree_nodes[parent_dn].add(f"[yellow]{dn.split(',')[0]}[/yellow]")
+            rdn = dn_parts[0] if dn_parts else dn
+            entry_node = tree_nodes[parent_dn].add(f"[yellow]{rdn}[/yellow]")
             
             # Add attributes as children
             for attr_name in sorted(entry.entry_attributes):
@@ -326,73 +366,3 @@ def format_output_filename(filename: str, extension: str) -> str:
     else:
         return f"{filename}.{extension}"
 
-"""
-Functions for formatting LDAP entries for output.
-"""
-import json
-import csv
-import io
-
-def format_json(entry_data: dict) -> str:
-    """Formats an LDAP entry as a JSON string."""
-    return json.dumps(entry_data, indent=2)
-
-def format_ldif(entry_data: dict) -> str:
-    """Formats an LDAP entry as an LDIF string."""
-    # Basic LDIF formatting, assuming entry_data is a dict with 'dn' and attributes
-    dn = entry_data.get("dn", "")
-    ldif_parts = [f"dn: {dn}"]
-    for key, values in entry_data.items():
-        if key == "dn":
-            continue
-        if isinstance(values, list):
-            for value in values:
-                ldif_parts.append(f"{key}: {value}")
-        else:
-            ldif_parts.append(f"{key}: {values}")
-    return "\n".join(ldif_parts) + "\n"
-
-def format_ldap_entry(entry_data: dict, output_format: str = "json") -> str:
-    """Formats a single LDAP entry based on the specified output format."""
-    if output_format == "json":
-        return format_json(entry_data)
-    elif output_format == "ldif":
-        return format_ldif(entry_data)
-    # Add other formats as needed
-    else:
-        # Default to a simple string representation or raise an error
-        return str(entry_data)
-
-def convert_to_csv(entries: list[dict], fieldnames: list[str] | None = None) -> str:
-    """Converts a list of LDAP entries (dictionaries) to a CSV string."""
-    if not entries:
-        return ""
-
-    output = io.StringIO()
-    
-    # If fieldnames are not provided, use keys from the first entry
-    # Ensuring 'dn' is the first column if present
-    if not fieldnames:
-        fieldnames = list(entries[0].keys())
-        if "dn" in fieldnames:
-            fieldnames.remove("dn")
-            fieldnames.insert(0, "dn")
-
-    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore', lineterminator='\n')
-    writer.writeheader()
-    for entry in entries:
-        # For attributes that are lists, join them into a single string
-        # This is a simple approach; more complex handling might be needed
-        processed_entry = {}
-        for key, value in entry.items():
-            if isinstance(value, list):
-                processed_entry[key] = ";".join(map(str,value))
-            else:
-                processed_entry[key] = value
-        writer.writerow(processed_entry)
-    
-    return output.getvalue()
-
-def format_entries_as_csv(entries: list[dict], fieldnames: list[str] | None = None) -> str:
-    """Formats a list of LDAP entries as a CSV string."""
-    return convert_to_csv(entries, fieldnames)
