@@ -178,8 +178,12 @@ class LdapConfig:
         # Handle anonymous vs. authenticated binding
         if self.username:
             if self.password is None:
-                # Prompt for password if not provided
-                self.password = getpass.getpass(f"Enter password for {self.username}: ")
+                # Try LDAP_PASSWORD env var before prompting
+                env_password = os.environ.get('LDAP_PASSWORD')
+                if env_password:
+                    self.password = env_password
+                else:
+                    self.password = getpass.getpass(f"Enter password for {self.username}: ")
             
             conn = Connection(
                 server,
@@ -199,143 +203,90 @@ class LdapConfig:
         return server, conn
 
 
+def _warn_if_password_on_cli(password):
+    """Print a security warning if password was passed via CLI flag."""
+    if password is not None:
+        console.print(
+            "[warning]Warning: Passing passwords via --password is insecure. "
+            "Use LDAP_PASSWORD env var or omit to be prompted.[/warning]"
+        )
+
+
+_ERROR_MESSAGES = {
+    LDAPBindError: "Authentication failed",
+    LDAPException: "LDAP error",
+    ValueError: "Operation error (ValueError)",
+    TypeError: "Operation error (TypeError)",
+    KeyError: "Operation error (KeyError)",
+    OSError: "File operation error",
+    IOError: "File operation error",
+}
+
+
+def _format_error(exc, mapping):
+    """Return a user-friendly error message for an exception using the mapping."""
+    for exc_type, prefix in mapping.items():
+        if isinstance(exc, exc_type):
+            return f"{prefix}: {exc}"
+    return f"Unexpected error: {exc}"
+
+
 def handle_connection_error(func):
-    """
-    Decorator to handle LDAP connection errors.
-    
-    Catches LDAP exceptions that might occur during connection operations
-    and displays user-friendly error messages.
-    
-    Args:
-        func: The function to decorate
-        
-    Returns:
-        Wrapped function that handles LDAP connection errors
-        
-    Example:
-        >>> @handle_connection_error
-        ... def my_ldap_function():
-        ...     # LDAP operations
-        ...     pass
-    """
+    """Decorator to handle LDAP connection errors with user-friendly messages."""
     import functools
-    
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        # Check if we're in debug mode via click context
         ctx = click.get_current_context(silent=True)
         is_debug = False
         if ctx and hasattr(ctx, 'obj') and isinstance(ctx.obj, dict):
             is_debug = ctx.obj.get('DEBUG', False)
-        
-        # Get the command string for error tracking before entering try block
-        func_name = func.__name__
-        command_str = func_name.replace("_command", "")
-        
-        # Set up variables outside try block
-        help_context_available = False
+
+        command_str = func.__name__.replace("_command", "")
+
         help_context = None
-        
         try:
-            # Check if help context is available
             try:
-                try:
-                    from ldapie.help_context import HelpContext
-                except ImportError:
-                    from src.ldapie.help_context import HelpContext
-                help_context = HelpContext()
-                help_context_available = True
+                from ldapie.help_context import HelpContext
             except ImportError:
-                help_context_available = False
-                if is_debug:
-                    console.print("[bold yellow]DEBUG[/bold yellow]: Could not import HelpContext.")
-            
-            # Debug mode: show function call details
+                from src.ldapie.help_context import HelpContext
+            help_context = HelpContext()
+        except ImportError:
+            if is_debug:
+                console.print("[bold yellow]DEBUG[/bold yellow]: Could not import HelpContext.")
+
+        try:
             if is_debug:
                 console.print(f"[bold blue]DEBUG[/bold blue]: Executing {func.__name__}")
                 console.print(f"[bold blue]DEBUG[/bold blue]: Arguments: {args}")
                 console.print(f"[bold blue]DEBUG[/bold blue]: Keyword arguments: {kwargs}")
-            
-            # Execute the function
+
             result = func(*args, **kwargs)
-            
+
             if is_debug:
                 console.print(f"[bold blue]DEBUG[/bold blue]: {func.__name__} completed successfully")
-                
             return result
-        except LDAPBindError as e:
-            error_msg = f"Authentication failed: {e}"
+
+        except (LDAPBindError, LDAPException, ValueError, TypeError, KeyError, OSError, IOError) as e:
+            error_msg = _format_error(e, _ERROR_MESSAGES)
             console.print(f"[error]{error_msg}[/error]")
-            
-            # Show stack trace in debug mode
             if is_debug:
                 console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
                 console.print(traceback.format_exc())
-            
-            # Record error in help context if available
-            if help_context_available and help_context:
+            if help_context:
                 help_context.add_error(command_str, error_msg)
-                
             sys.exit(1)
-        except LDAPException as e:
-            error_msg = f"LDAP error: {e}"
-            console.print(f"[error]{error_msg}[/error]")
-            
-            # Show stack trace in debug mode
-            if is_debug:
-                console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
-                console.print(traceback.format_exc())
-            
-            # Record error in help context if available
-            if help_context_available and help_context:
-                help_context.add_error(command_str, error_msg)
-                
-            sys.exit(1)
-        except (ValueError, TypeError, KeyError) as e:
-            # Handle most common operation errors
-            error_msg = f"Operation error ({type(e).__name__}): {e}"
-            console.print(f"[error]{error_msg}[/error]")
-            
-            # Show stack trace in debug mode
-            if is_debug:
-                console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
-                console.print(traceback.format_exc())
-            
-            # Record error in help context if available
-            if help_context_available and help_context:
-                help_context.add_error(command_str, error_msg)
-                
-            sys.exit(1)
-        except (OSError, IOError) as e:
-            # Handle file operation errors
-            error_msg = f"File operation error: {e}"
-            console.print(f"[error]{error_msg}[/error]")
-            
-            # Show stack trace in debug mode
-            if is_debug:
-                console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
-                console.print(traceback.format_exc())
-            
-            # Record error in help context if available
-            if help_context_available and help_context:
-                help_context.add_error(command_str, error_msg)
-                
-            sys.exit(1)
+
         except Exception as e:
-            # This is our last resort fallback for unexpected errors
             error_msg = f"Unexpected error: {e}"
             console.print(f"[error]{error_msg}[/error]")
-            
-            # Show stack trace in debug mode
             if is_debug:
                 console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
                 console.print(traceback.format_exc())
-            
-            # Record error in help context if available
-            if help_context_available and help_context:
+            if help_context:
                 help_context.add_error(command_str, error_msg)
-                
             sys.exit(1)
+
     return wrapper
 
 @click.group(name="ldapie")
@@ -540,6 +491,8 @@ def search_command(
         port=port
     )
     
+    _warn_if_password_on_cli(password)
+
     # Validate search filter
     try:
         general_utils.validate_search_filter(filter_query)
@@ -625,7 +578,8 @@ def search_command(
 @handle_connection_error
 def info_command(host, username, password, ssl, port, json_output):
     """Show information about LDAP server"""
-    
+    _warn_if_password_on_cli(password)
+
     # Configure LDAP connection
     config = LdapConfig(
         host=host,
@@ -657,6 +611,8 @@ def info_command(host, username, password, ssl, port, json_output):
 @handle_connection_error
 def compare_command(host, dn1, dn2, username, password, ssl, port, attrs):
     """Compare two LDAP entries"""
+    _warn_if_password_on_cli(password)
+
     # Validate DNs
     for dn_val in (dn1, dn2):
         try:
@@ -692,7 +648,8 @@ def compare_command(host, dn1, dn2, username, password, ssl, port, attrs):
 @handle_connection_error
 def schema_command(host, object_class, username, password, ssl, port, attr):
     """Get schema information from LDAP server"""
-    
+    _warn_if_password_on_cli(password)
+
     # Configure LDAP connection
     config = LdapConfig(
         host=host,
@@ -723,6 +680,8 @@ def schema_command(host, object_class, username, password, ssl, port, attr):
 @handle_connection_error
 def add_command(host, dn, username, password, ssl, port, object_class, attr, ldif_file, json_file):
     """Add a new entry to the LDAP directory"""
+    _warn_if_password_on_cli(password)
+
     # Validate DN
     try:
         general_utils.validate_dn(dn)
@@ -790,6 +749,8 @@ def add_command(host, dn, username, password, ssl, port, object_class, attr, ldi
 @handle_connection_error
 def delete_command(host, dn, username, password, ssl, port, recursive):
     """Delete an entry from the LDAP directory"""
+    _warn_if_password_on_cli(password)
+
     # Validate DN
     try:
         general_utils.validate_dn(dn)
@@ -834,6 +795,8 @@ def delete_command(host, dn, username, password, ssl, port, recursive):
 @handle_connection_error
 def modify_command(host, dn, username, password, ssl, port, add, replace, delete, file):
     """Modify an existing LDAP entry"""
+    _warn_if_password_on_cli(password)
+
     # Validate DN
     try:
         general_utils.validate_dn(dn)
@@ -887,6 +850,8 @@ def modify_command(host, dn, username, password, ssl, port, add, replace, delete
 @handle_connection_error
 def rename_command(host, dn, new_rdn, username, password, ssl, port, delete_old_rdn, parent):
     """Rename or move an LDAP entry"""
+    _warn_if_password_on_cli(password)
+
     # Validate DN
     try:
         general_utils.validate_dn(dn)
@@ -924,6 +889,7 @@ def rename_command(host, dn, new_rdn, username, password, ssl, port, delete_old_
 @handle_connection_error
 def interactive_command(host, username, password, ssl, port, base):
     """Start interactive LDAP console"""
+    _warn_if_password_on_cli(password)
     console.print("[info]Starting interactive mode[/info]")
     
     if host:

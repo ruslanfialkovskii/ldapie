@@ -83,6 +83,7 @@ class QueryHistory:
         try:
             with open(self.history_file, 'w') as f:
                 json.dump(self.history, f)
+            os.chmod(self.history_file, 0o600)
         except (IOError, PermissionError) as e:
             print(f"Warning: Could not save query history: {e}")
             
@@ -125,7 +126,7 @@ class TabCompletion:
         args = line.split()
         if len(args) == 1 and not text:
             # Just entered "connect"
-            return ["ldap://", "ldaps://"] + self.get_hosts_completion("")
+            return self.get_hosts_completion("")
         elif len(args) <= 2 or (len(args) == 1 and text):
             # Second argument - host
             return self.get_hosts_completion(text)

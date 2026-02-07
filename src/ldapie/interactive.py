@@ -68,7 +68,8 @@ class LDAPShell(cmd.Cmd):
     
             if os.path.exists(self.history_file):
                 readline.read_history_file(self.history_file)
-    
+                os.chmod(self.history_file, 0o600)
+
         except (OSError, IOError, PermissionError) as e:
             console.print(f"[warning]Could not read history file: {e}[/warning]")
             console.print("[info]History will not be saved.[/info]")
@@ -103,6 +104,7 @@ class LDAPShell(cmd.Cmd):
                 try:
                     readline.set_history_length(1000)
                     readline.write_history_file(self.history_file)
+                    os.chmod(self.history_file, 0o600)
                 except (OSError, IOError, PermissionError) as e:
                     self.console.print(f"[warning]Could not save history: {e}[/warning]")
 

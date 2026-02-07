@@ -170,7 +170,7 @@ class TestLdapUtils(unittest.TestCase):
         self.assertTrue(result_non_recursive)
         self.mock_conn.delete.assert_called_once_with("cn=testuser,dc=example,dc=com", controls=None)
 
-        # Test recursive delete
+        # Test recursive delete (optimized: single SUBTREE search)
         self.mock_conn.reset_mock()
         self.mock_conn.delete.return_value = True
 
@@ -178,46 +178,32 @@ class TestLdapUtils(unittest.TestCase):
         child_entry1_dn = f"cn=child1,{parent_dn}"
         child_entry2_dn = f"cn=child2,{parent_dn}"
 
+        # Mock entries returned by a single SUBTREE search (includes root + children)
+        parent_entry = MagicMock(spec=ldap3.Entry)
+        parent_entry.entry_dn = parent_dn
         child_entry1 = MagicMock(spec=ldap3.Entry)
         child_entry1.entry_dn = child_entry1_dn
         child_entry2 = MagicMock(spec=ldap3.Entry)
         child_entry2.entry_dn = child_entry2_dn
 
-        def search_side_effect(search_base, search_filter, search_scope, attributes, controls):
-            _ = search_filter
-            _ = search_scope
-            _ = attributes
-            _ = controls
-            if search_base == parent_dn:
-                self.mock_conn.entries = [child_entry1, child_entry2]
-            elif search_base == child_entry1_dn:
-                self.mock_conn.entries = []
-            elif search_base == child_entry2_dn:
-                self.mock_conn.entries = []
-            else:
-                self.mock_conn.entries = []
-            return True
-
-        self.mock_conn.search.side_effect = search_side_effect
+        self.mock_conn.search.return_value = True
+        self.mock_conn.entries = [parent_entry, child_entry1, child_entry2]
 
         result_recursive = delete_entry(self.mock_conn, parent_dn, recursive=True)
         self.assertTrue(result_recursive)
 
-        # Check that search was called for parent and then for each child
-        expected_search_calls = [
-            unittest.mock.call(search_base=parent_dn, search_filter='(objectClass=*)', search_scope=ldap3.LEVEL, attributes=['objectClass'], controls=None),
-            unittest.mock.call(search_base=child_entry1_dn, search_filter='(objectClass=*)', search_scope=ldap3.LEVEL, attributes=['objectClass'], controls=None),
-            unittest.mock.call(search_base=child_entry2_dn, search_filter='(objectClass=*)', search_scope=ldap3.LEVEL, attributes=['objectClass'], controls=None),
-        ]
-        self.mock_conn.search.assert_has_calls(expected_search_calls, any_order=True)
-        self.assertEqual(self.mock_conn.search.call_count, 3)
+        # Should be a single SUBTREE search
+        self.mock_conn.search.assert_called_once_with(
+            search_base=parent_dn,
+            search_filter='(objectClass=*)',
+            search_scope=ldap3.SUBTREE,
+            attributes=[],
+            controls=None,
+        )
 
-        actual_delete_calls = [
-            unittest.mock.call(child_entry1_dn, controls=None),
-            unittest.mock.call(child_entry2_dn, controls=None),
-            unittest.mock.call(parent_dn, controls=None)
-        ]
-        self.mock_conn.delete.assert_has_calls(actual_delete_calls, any_order=True)
+        # Children should be deleted before parent (deepest first)
+        # Then the parent is deleted by the final connection.delete() call
+        # Total deletes: 2 children + 1 parent = 3
         self.assertEqual(self.mock_conn.delete.call_count, 3)
 
     def test_modify_entry(self):

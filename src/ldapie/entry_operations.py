@@ -23,18 +23,35 @@ def add_entry(connection: Connection, dn: str, attributes: Dict[str, Any], contr
 
 
 def delete_entry(connection: Connection, entry_dn: str, recursive: bool = False, controls=None) -> bool:
-    """Deletes an LDAP entry. Can recursively delete child entries."""
-    if recursive:
-        connection.search(search_base=entry_dn,
-                          search_filter='(objectClass=*)',
-                          search_scope=ldap3.LEVEL,  # Direct children
-                          attributes=['objectClass'],  # Minimal attributes
-                          controls=controls)
+    """Deletes an LDAP entry. Can recursively delete child entries.
 
-        children_dns = [entry.entry_dn for entry in connection.entries]
-        for child_dn in children_dns:
-            # Recursive call
-            delete_entry(connection, child_dn, recursive=True, controls=controls)
+    When recursive=True, performs a single SUBTREE search to find all
+    descendants, sorts by depth (deepest first), then deletes in order.
+    This is O(1) network round trips for discovery instead of O(n).
+    """
+    if recursive:
+        connection.search(
+            search_base=entry_dn,
+            search_filter='(objectClass=*)',
+            search_scope=ldap3.SUBTREE,
+            attributes=[],  # Only need DNs
+            controls=controls,
+        )
+
+        # Sort by depth (deepest first) so children are deleted before parents
+        all_dns = sorted(
+            [entry.entry_dn for entry in connection.entries],
+            key=lambda dn: len(dn.split(',')),
+            reverse=True,
+        )
+
+        for dn in all_dns:
+            if dn == entry_dn:
+                continue  # Delete the root entry last
+            if not connection.delete(dn, controls=controls):
+                error_message = (connection.result.get('description', 'Unknown error')
+                                if connection.result else 'Unknown error')
+                raise RuntimeError(f"LDAP Delete operation failed for {dn}: {error_message}")
 
     if connection.delete(entry_dn, controls=controls):
         return True
