@@ -27,6 +27,7 @@ Usage:
 """
 
 import os
+import ssl
 import sys
 from . import __version__
 import click
@@ -37,7 +38,7 @@ import traceback  # For debug stack traces
 from rich.console import Console
 from rich.theme import Theme
 from rich.table import Table
-from ldap3 import Server, Connection, ALL, ALL_ATTRIBUTES, SUBTREE, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE
+from ldap3 import Server, Connection, Tls, ALL, ALL_ATTRIBUTES, SUBTREE, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE
 from ldap3.core.exceptions import LDAPException, LDAPBindError
 
 # Define color themes before importing other modules to avoid circular imports
@@ -128,10 +129,12 @@ class LdapConfig:
         use_ssl: bool = False,
         port: Optional[int] = None,
         timeout: int = 30,
+        starttls: bool = False,
+        no_verify: bool = False,
     ):
         """
         Initialize LDAP connection configuration.
-        
+
         Args:
             host: LDAP server hostname
             username: Optional bind DN for authentication
@@ -139,11 +142,8 @@ class LdapConfig:
             use_ssl: Whether to use SSL/TLS
             port: LDAP port number (default: 389, or 636 with SSL)
             timeout: Connection timeout in seconds
-            
-        Example:
-            >>> config = LdapConfig("ldap.example.com", 
-            ...                    username="cn=admin,dc=example,dc=com",
-            ...                    password="secret", use_ssl=True)
+            starttls: Whether to use STARTTLS (upgrade plain to TLS)
+            no_verify: Skip TLS certificate verification (insecure)
         """
         self.host = host
         self.username = username
@@ -151,6 +151,8 @@ class LdapConfig:
         self.use_ssl = use_ssl
         self.port = port or (636 if use_ssl else 389)
         self.timeout = timeout
+        self.starttls = starttls
+        self.no_verify = no_verify
 
     def get_connection(self) -> Tuple[Server, Connection]:
         """
@@ -172,9 +174,17 @@ class LdapConfig:
         Example:
             >>> server, conn = config.get_connection()
         """
+        # Configure TLS if SSL or STARTTLS is enabled
+        tls_config = None
+        if self.use_ssl or self.starttls:
+            validate = ssl.CERT_NONE if self.no_verify else ssl.CERT_REQUIRED
+            if self.no_verify:
+                console.print("[warning]Warning: TLS certificate verification is disabled.[/warning]")
+            tls_config = Tls(validate=validate)
+
         server_uri = f"{'ldaps' if self.use_ssl else 'ldap'}://{self.host}:{self.port}"
-        server = Server(server_uri, get_info=ALL, connect_timeout=self.timeout)
-        
+        server = Server(server_uri, get_info=ALL, connect_timeout=self.timeout, tls=tls_config)
+
         # Handle anonymous vs. authenticated binding
         if self.username:
             if self.password is None:
@@ -199,7 +209,11 @@ class LdapConfig:
                 auto_bind=True,
                 raise_exceptions=True
             )
-            
+
+        # Upgrade to TLS via STARTTLS if requested (and not already using LDAPS)
+        if self.starttls and not self.use_ssl:
+            conn.start_tls()
+
         return server, conn
 
 
@@ -435,6 +449,8 @@ eval "$(_LDAPIE_COMPLETE={shell}_source ldapie)"
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("-a", "--attrs", multiple=True, help="Attributes to fetch (can be used multiple times)")
 @click.option("--scope", type=click.Choice(["base", "one", "sub"]), default="sub", help="Search scope")
@@ -449,8 +465,9 @@ eval "$(_LDAPIE_COMPLETE={shell}_source ldapie)"
 @add_rich_help_option
 @handle_connection_error
 def search_command(
-    host, base_dn, filter_query, username, password, ssl, port, attrs,
-    scope, limit, page_size, json_output, ldif, csv, tree, output_file, theme
+    host, base_dn, filter_query, username, password, ssl, starttls, no_verify,
+    port, attrs, scope, limit, page_size, json_output, ldif, csv, tree,
+    output_file, theme
 ):
     """
     Search the LDAP directory.
@@ -488,7 +505,9 @@ def search_command(
         username=username,
         password=password,
         use_ssl=ssl,
-        port=port
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
     )
     
     _warn_if_password_on_cli(password)
@@ -572,11 +591,13 @@ def search_command(
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--json", "json_output", is_flag=True, help="Output in JSON format")
 @add_rich_help_option
 @handle_connection_error
-def info_command(host, username, password, ssl, port, json_output):
+def info_command(host, username, password, ssl, starttls, no_verify, port, json_output):
     """Show information about LDAP server"""
     _warn_if_password_on_cli(password)
 
@@ -586,7 +607,9 @@ def info_command(host, username, password, ssl, port, json_output):
         username=username,
         password=password,
         use_ssl=ssl,
-        port=port
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
     )
     
     # Connect to LDAP server
@@ -605,11 +628,13 @@ def info_command(host, username, password, ssl, port, json_output):
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("-a", "--attrs", multiple=True, help="Attributes to compare (can be used multiple times)")
 @add_rich_help_option
 @handle_connection_error
-def compare_command(host, dn1, dn2, username, password, ssl, port, attrs):
+def compare_command(host, dn1, dn2, username, password, ssl, starttls, no_verify, port, attrs):
     """Compare two LDAP entries"""
     _warn_if_password_on_cli(password)
 
@@ -627,7 +652,9 @@ def compare_command(host, dn1, dn2, username, password, ssl, port, attrs):
         username=username,
         password=password,
         use_ssl=ssl,
-        port=port
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
     )
     
     # Connect to LDAP server
@@ -642,11 +669,13 @@ def compare_command(host, dn1, dn2, username, password, ssl, port, attrs):
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--attr", help="Display information about specific attribute")
 @add_rich_help_option
 @handle_connection_error
-def schema_command(host, object_class, username, password, ssl, port, attr):
+def schema_command(host, object_class, username, password, ssl, starttls, no_verify, port, attr):
     """Get schema information from LDAP server"""
     _warn_if_password_on_cli(password)
 
@@ -656,7 +685,9 @@ def schema_command(host, object_class, username, password, ssl, port, attr):
         username=username,
         password=password,
         use_ssl=ssl,
-        port=port
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
     )
     
     # Connect to LDAP server
@@ -671,6 +702,8 @@ def schema_command(host, object_class, username, password, ssl, port, attr):
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("-c", "--class", "object_class", multiple=True, help="Object class for new entry")
 @click.option("-a", "--attr", multiple=True, help="Attribute to add in the format name=value")
@@ -678,7 +711,7 @@ def schema_command(host, object_class, username, password, ssl, port, attr):
 @click.option("--json-file", "json_file", help="JSON file containing entry attributes")
 @add_rich_help_option
 @handle_connection_error
-def add_command(host, dn, username, password, ssl, port, object_class, attr, ldif_file, json_file):
+def add_command(host, dn, username, password, ssl, starttls, no_verify, port, object_class, attr, ldif_file, json_file):
     """Add a new entry to the LDAP directory"""
     _warn_if_password_on_cli(password)
 
@@ -695,7 +728,9 @@ def add_command(host, dn, username, password, ssl, port, object_class, attr, ldi
         username=username,
         password=password,
         use_ssl=ssl,
-        port=port
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
     )
     
     # Connect to LDAP server
@@ -743,11 +778,13 @@ def add_command(host, dn, username, password, ssl, port, object_class, attr, ldi
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--recursive", is_flag=True, help="Delete recursively")
 @add_rich_help_option
 @handle_connection_error
-def delete_command(host, dn, username, password, ssl, port, recursive):
+def delete_command(host, dn, username, password, ssl, starttls, no_verify, port, recursive):
     """Delete an entry from the LDAP directory"""
     _warn_if_password_on_cli(password)
 
@@ -764,7 +801,9 @@ def delete_command(host, dn, username, password, ssl, port, recursive):
         username=username,
         password=password,
         use_ssl=ssl,
-        port=port
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
     )
     
     # Connect to LDAP server
@@ -786,6 +825,8 @@ def delete_command(host, dn, username, password, ssl, port, recursive):
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--add", multiple=True, help="Add attribute in format name=value")
 @click.option("--replace", multiple=True, help="Replace attribute in format name=value")
@@ -793,7 +834,7 @@ def delete_command(host, dn, username, password, ssl, port, recursive):
 @click.option("--file", help="JSON file with changes")
 @add_rich_help_option
 @handle_connection_error
-def modify_command(host, dn, username, password, ssl, port, add, replace, delete, file):
+def modify_command(host, dn, username, password, ssl, starttls, no_verify, port, add, replace, delete, file):
     """Modify an existing LDAP entry"""
     _warn_if_password_on_cli(password)
 
@@ -810,7 +851,9 @@ def modify_command(host, dn, username, password, ssl, port, add, replace, delete
         username=username,
         password=password,
         use_ssl=ssl,
-        port=port
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
     )
     
     # Connect to LDAP server
@@ -843,12 +886,14 @@ def modify_command(host, dn, username, password, ssl, port, add, replace, delete
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--delete-old-rdn", is_flag=True, help="Delete old RDN", default=True)
 @click.option("--parent", help="New parent DN")
 @add_rich_help_option
 @handle_connection_error
-def rename_command(host, dn, new_rdn, username, password, ssl, port, delete_old_rdn, parent):
+def rename_command(host, dn, new_rdn, username, password, ssl, starttls, no_verify, port, delete_old_rdn, parent):
     """Rename or move an LDAP entry"""
     _warn_if_password_on_cli(password)
 
@@ -865,7 +910,9 @@ def rename_command(host, dn, new_rdn, username, password, ssl, port, delete_old_
         username=username,
         password=password,
         use_ssl=ssl,
-        port=port
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
     )
     
     # Connect to LDAP server
@@ -883,11 +930,13 @@ def rename_command(host, dn, new_rdn, username, password, ssl, port, delete_old_
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--base", help="Base DN for operations")
 @add_rich_help_option
 @handle_connection_error
-def interactive_command(host, username, password, ssl, port, base):
+def interactive_command(host, username, password, ssl, starttls, no_verify, port, base):
     """Start interactive LDAP console"""
     _warn_if_password_on_cli(password)
     console.print("[info]Starting interactive mode[/info]")
@@ -899,7 +948,9 @@ def interactive_command(host, username, password, ssl, port, base):
             username=username,
             password=password,
             use_ssl=ssl,
-            port=port
+            port=port,
+            starttls=starttls,
+            no_verify=no_verify,
         )
         
         # Connect to LDAP server

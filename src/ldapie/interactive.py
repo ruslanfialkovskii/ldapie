@@ -44,6 +44,7 @@ class LDAPShell(cmd.Cmd):
         self.base_dn = base_dn or ""
         self.connected = conn is not None and conn.bound
         self.help_context = HelpContext() if help_available and HelpContext else None
+        self._schema_cache = None
         self.search_history: List[str] = []
         self.query_history: Dict[str, List[str]] = {
             'search': [],    # Store search filters
@@ -197,6 +198,7 @@ class LDAPShell(cmd.Cmd):
                 self.conn = ldap3.Connection(self.server, auto_bind=True)
                 
             self.connected = True
+            self._schema_cache = None
             self.console.print(f"[success]Connected to {host}[/success]")
             
             if host not in self.query_history.get('host', []):
@@ -314,7 +316,11 @@ class LDAPShell(cmd.Cmd):
         if not self.connected or not self.server:
             self.console.print("[error]Not connected to any LDAP server[/error]")
             return
-            
+
+        # Cache schema on first access
+        if self._schema_cache is None and self.server.schema:
+            self._schema_cache = self.server.schema
+
         args = arg.split()
         if not args:
             show_schema(self.server, None, None, self.console)

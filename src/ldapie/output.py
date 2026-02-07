@@ -41,26 +41,6 @@ def _ldif_value_line(attr_name: str, value: Any) -> str:
         return f"{attr_name}:: {b64_value}"
     return f"{attr_name}: {str_value}"
 
-def _split_dn(dn: str) -> List[str]:
-    parts: List[str] = []
-    buf: List[str] = []
-    escape = False
-    for ch in dn:
-        if escape:
-            buf.append(ch)
-            escape = False
-            continue
-        if ch == "\\":
-            buf.append(ch)
-            escape = True
-            continue
-        if ch == ",":
-            parts.append("".join(buf).strip())
-            buf = []
-            continue
-        buf.append(ch)
-    parts.append("".join(buf).strip())
-    return [part for part in parts if part]
 
 def output_json(entries: List[Any], output_file: Optional[str] = None) -> None:
     """
@@ -234,14 +214,15 @@ def build_tree(entries: List[Any], base_dn: str) -> Tree:
         if dn == base_dn:
             continue
             
-        # Find parent DN
-        dn_parts = _split_dn(dn)
+        # Find parent DN using ldap3's parse_dn
+        parsed = parse_dn(dn)
+        dn_parts = [f"{attr}={val}" for attr, val, sep in parsed]
         parent_dn = ",".join(dn_parts[1:]) if len(dn_parts) > 1 else base_dn
-        
+
         # If we don't have the parent, use the base or nearest ancestor
         if parent_dn not in tree_nodes:
             parent_dn = base_dn
-            
+
         # Add this entry to its parent
         if parent_dn in tree_nodes:
             rdn = dn_parts[0] if dn_parts else dn
