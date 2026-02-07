@@ -174,6 +174,49 @@ COMMAND_PATTERNS = {
     }
 }
 
+def _discover_commands(cli_group) -> Dict[str, Dict[str, Any]]:
+    """Auto-discover commands from a Click CLI group.
+
+    Introspects the Click group to build command patterns dynamically,
+    extracting syntax from arguments and options. The static COMMAND_PATTERNS
+    dict is used as a fallback for examples and common_errors (which can't
+    be auto-discovered).
+
+    Args:
+        cli_group: A Click Group object.
+
+    Returns:
+        Dict mapping command names to pattern dicts with 'syntax' key.
+    """
+    discovered: Dict[str, Dict[str, Any]] = {}
+    try:
+        for name, cmd in cli_group.commands.items():
+            parts = [name]
+            # Extract arguments
+            for param in cmd.params:
+                if hasattr(param, 'required') and param.required and not param.is_eager:
+                    if hasattr(param, 'type') and hasattr(param, 'human_readable_name'):
+                        parts.append(f"<{param.human_readable_name}>")
+                    else:
+                        parts.append(f"<{param.name}>")
+                elif not param.required and not param.is_eager:
+                    parts.append(f"[{param.name}]")
+
+            syntax = " ".join(parts)
+
+            # Merge with static patterns if available
+            static = COMMAND_PATTERNS.get(name, {})
+            discovered[name] = {
+                "syntax": syntax,
+                "examples": static.get("examples", []),
+                "next_steps": static.get("next_steps", []),
+                "common_errors": static.get("common_errors", []),
+            }
+    except Exception:
+        pass  # Graceful fallback to static patterns
+    return discovered
+
+
 class HelpContext:
     """
     Singleton class that tracks command history and operational context
@@ -198,6 +241,15 @@ class HelpContext:
     
     def _initialize(self):
         """Initialize context tracking structures"""
+        # Auto-discover commands from CLI group (lazy import to avoid circulars)
+        try:
+            from .ldapie import cli as cli_group
+            discovered = _discover_commands(cli_group)
+            if discovered:
+                COMMAND_PATTERNS.update(discovered)
+        except ImportError:
+            pass
+
         self.command_history = deque(maxlen=20)
         self.current_context = {
             "command": None,

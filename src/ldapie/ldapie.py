@@ -317,7 +317,14 @@ def cli(ctx, install_completion=False, show_completion=False, demo=False, debug=
     ctx.ensure_object(dict)
     ctx.obj['DEBUG'] = debug
     ctx.obj['DEMO'] = demo
-    
+
+    # Load config file defaults
+    try:
+        from .config import load_config
+        ctx.obj['config'] = load_config()
+    except ImportError:
+        ctx.obj['config'] = {}
+
     if debug:
         console.print("[bold red]Debug mode enabled.[/bold red]")
     # Import help context for CLI commands
@@ -961,6 +968,145 @@ def interactive_command(host, username, password, ssl, starttls, no_verify, port
     else:
         # Start interactive session without connection
         interactive_utils.start_interactive_session(None, None, console, None)
+
+@cli.command("export")
+@click.argument("host")
+@click.argument("base_dn")
+@click.argument("filter_query", default="(objectClass=*)")
+@click.option("-u", "--username", help="Bind DN for authentication")
+@click.option("-p", "--password", help="Password for authentication")
+@click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
+@click.option("--output", "output_file", required=True, help="Output file path")
+@click.option("--format", "fmt", type=click.Choice(["ldif", "json"]), default="ldif", help="Export format")
+@add_rich_help_option
+@handle_connection_error
+def export_command(host, base_dn, filter_query, username, password, ssl, starttls, no_verify, port, output_file, fmt):
+    """Export LDAP entries to a file"""
+    _warn_if_password_on_cli(password)
+
+    try:
+        general_utils.validate_search_filter(filter_query)
+    except ValueError as e:
+        console.print(f"[error]Invalid LDAP filter: {e}[/error]")
+        sys.exit(1)
+
+    config = LdapConfig(
+        host=host,
+        username=username,
+        password=password,
+        use_ssl=ssl,
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
+    )
+
+    server, conn = config.get_connection()
+    conn.search(base_dn, filter_query, search_scope=SUBTREE, attributes=ALL_ATTRIBUTES)
+    entries = conn.entries
+
+    if not entries:
+        console.print("[warning]No entries found to export.[/warning]")
+        return
+
+    if fmt == "json":
+        output_utils.output_json(entries, output_file)
+    else:
+        output_utils.output_ldif(entries, output_file)
+
+    console.print(f"[success]Exported {len(entries)} entries to {output_file}[/success]")
+
+
+@cli.command("import")
+@click.argument("host")
+@click.argument("ldif_file", type=click.Path(exists=True))
+@click.option("-u", "--username", help="Bind DN for authentication")
+@click.option("-p", "--password", help="Password for authentication")
+@click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
+@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
+@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
+@add_rich_help_option
+@handle_connection_error
+def import_command(host, ldif_file, username, password, ssl, starttls, no_verify, port):
+    """Import LDAP entries from an LDIF file"""
+    _warn_if_password_on_cli(password)
+
+    config = LdapConfig(
+        host=host,
+        username=username,
+        password=password,
+        use_ssl=ssl,
+        port=port,
+        starttls=starttls,
+        no_verify=no_verify,
+    )
+
+    server, conn = config.get_connection()
+
+    # Parse LDIF file
+    entries = _parse_ldif_file(ldif_file)
+    if not entries:
+        console.print("[warning]No entries found in LDIF file.[/warning]")
+        return
+
+    success_count = 0
+    error_count = 0
+    for entry in entries:
+        dn = entry.pop('dn', None)
+        if not dn:
+            console.print("[error]Entry missing DN, skipping.[/error]")
+            error_count += 1
+            continue
+        if conn.add(dn, attributes=entry):
+            success_count += 1
+        else:
+            console.print(f"[error]Failed to add {dn}: {conn.result}[/error]")
+            error_count += 1
+
+    console.print(f"[success]Import complete: {success_count} added, {error_count} errors[/success]")
+
+
+def _parse_ldif_file(path: str):
+    """Parse a simple LDIF file into a list of entry dicts."""
+    entries = []
+    current_entry = {}
+
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.rstrip('\n\r')
+            if not line:
+                # Empty line marks end of entry
+                if current_entry:
+                    entries.append(current_entry)
+                    current_entry = {}
+                continue
+            if line.startswith('#'):
+                continue
+            if ':' not in line:
+                continue
+            attr, _, value = line.partition(':')
+            attr = attr.strip()
+            value = value.strip()
+            # Handle base64 values (attr:: value)
+            if value.startswith(':'):
+                import base64
+                value = base64.b64decode(value[1:].strip()).decode('utf-8', errors='replace')
+            if attr in current_entry:
+                if isinstance(current_entry[attr], list):
+                    current_entry[attr].append(value)
+                else:
+                    current_entry[attr] = [current_entry[attr], value]
+            else:
+                current_entry[attr] = value
+
+    if current_entry:
+        entries.append(current_entry)
+
+    return entries
+
 
 def print_help():
     """
