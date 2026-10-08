@@ -1,174 +1,107 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Context-Sensitive Help System for LDAPie
+Context-sensitive help for the LDAPie interactive shell.
 
-This module implements a context-aware help system that provides smart suggestions
-and guidance based on the current operation context and command history.
+The shell owns one HelpContext, feeds it every command line and error, and
+asks it for command help (``help <command>``, ``?``), suggestions
+(``suggest``) and dry-run validation (``validate <command>``).
 
 Key components:
-- HelpContext: A singleton class that tracks command history and operation context
-- CommandAnalyzer: Parses and analyzes user input for intent detection
-- SuggestionEngine: Provides contextual suggestions and examples
-- ValidationEngine: Performs dry-run of commands to validate before execution
-
-Example:
-    >>> from help_context import HelpContext
-    >>> ctx = HelpContext()
-    >>> ctx.add_command("search ldap.example.com 'dc=example,dc=com'")
-    >>> suggestions = ctx.get_suggestions()
+- COMMAND_PATTERNS: syntax, examples and tips for every shell command
+- HelpContext: tracks command history, session state and the current operation
+- CommandValidator: checks a shell command without running it
 """
 
-import json
 import shlex
 from collections import defaultdict, deque
 from difflib import get_close_matches
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
-import click
+from .utils import validate_dn, validate_search_filter
 
-# Common LDAP command patterns for analysis and suggestions
+CONNECT_FLAGS = ("--ssl", "--starttls", "--no-verify")
+
+# The shell's commands: syntax, examples, next steps and common errors
 COMMAND_PATTERNS: Dict[str, Dict[str, Any]] = {
-    "search": {
-        "syntax": "search <host> <base_dn> [<filter>] [options]",
+    "connect": {
+        "syntax": "connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify]",
         "examples": [
-            "search ldap.example.com 'dc=example,dc=com'",
-            "search ldap.example.com 'dc=example,dc=com' '(objectClass=person)' -a cn -a mail",
-            "search ldap.example.com 'dc=example,dc=com' --tree",
+            "connect ldap.example.com",
+            "connect ldap.example.com 636 cn=admin,dc=example,dc=com --ssl",
+            "connect ldap.example.com 389 cn=admin,dc=example,dc=com --starttls",
         ],
         "next_steps": [
-            "Use --json, --ldif, or --csv to change output format",
-            "Add -a attribute to specify attributes to retrieve",
-            "Use --tree to view results in a tree structure",
+            "Set the base DN: base dc=example,dc=com",
+            "Check the server: info",
         ],
         "common_errors": [
-            "Missing quotes around base_dn or filter",
-            "Invalid filter syntax",
-            "Using special characters without escaping",
+            "Without a bind DN the connection is anonymous",
+            "You are prompted for the password (or set LDAP_PASSWORD)",
+            "--no-verify disables certificate checks; use it only for testing",
+        ],
+    },
+    "base": {
+        "syntax": "base <dn>",
+        "examples": ["base dc=example,dc=com", "base ou=people,dc=example,dc=com"],
+        "next_steps": ["Search below the base DN: search (objectClass=*)"],
+        "common_errors": ["The DN must be well-formed: ou=people,dc=example,dc=com"],
+    },
+    "search": {
+        "syntax": "search [filter] [attribute...]",
+        "examples": [
+            "search",
+            "search (objectClass=person)",
+            "search (uid=j*) cn mail",
+            "search '(&(objectClass=person)(mail=*@example.com))' cn",
+        ],
+        "next_steps": [
+            "Narrow the results with a filter: search (uid=admin)",
+            "Fetch only some attributes: search (objectClass=person) cn mail",
+            "Look up an object class: schema person",
+        ],
+        "common_errors": [
+            "Filters must be enclosed in parentheses",
+            "Quote a filter that contains spaces",
+            "Set the base DN first: base <dn>",
         ],
     },
     "info": {
-        "syntax": "info <host> [options]",
-        "examples": [
-            "info ldap.example.com",
-            "info ldap.example.com -u 'cn=admin,dc=example,dc=com'",
-        ],
-        "next_steps": [
-            "Use schema command to view object class details",
-            "Check server capabilities with --json option",
-        ],
-        "common_errors": ["Authentication required for detailed information"],
-    },
-    "compare": {
-        "syntax": "compare <host> <dn1> <dn2> [options]",
-        "examples": [
-            "compare ldap.example.com 'uid=user1,ou=people,dc=example,dc=com' 'uid=user2,ou=people,dc=example,dc=com'",
-            "compare ldap.example.com 'uid=user1,ou=people,dc=example,dc=com' 'uid=user2,ou=people,dc=example,dc=com' -a mail -a cn",
-        ],
-        "next_steps": [
-            "Specify attributes to compare with -a option",
-            "Use --json for machine-readable output",
-        ],
-        "common_errors": ["DNs must be properly quoted", "Both entries must exist"],
+        "syntax": "info",
+        "examples": ["info"],
+        "next_steps": ["Browse the schema: schema"],
+        "common_errors": ["Requires a connection (connect first)"],
     },
     "schema": {
-        "syntax": "schema <host> [<object_class>] [options]",
-        "examples": [
-            "schema ldap.example.com",
-            "schema ldap.example.com person",
-            "schema ldap.example.com --attr mail",
-        ],
-        "next_steps": [
-            "Look up specific object class details",
-            "Check attribute syntax with --attr option",
-        ],
-        "common_errors": ["Object class or attribute may not exist"],
+        "syntax": "schema [objectClass|--attr name]",
+        "examples": ["schema", "schema inetOrgPerson", "schema --attr mail"],
+        "next_steps": ["Search for entries of a class: search (objectClass=person)"],
+        "common_errors": ["The object class or attribute may not exist in the schema"],
     },
-    "add": {
-        "syntax": "add <host> <dn> [options]",
+    "validate": {
+        "syntax": "validate <command>",
         "examples": [
-            "add ldap.example.com 'cn=newuser,ou=people,dc=example,dc=com' --class inetOrgPerson --attr cn=newuser --attr sn=User",
-            "add ldap.example.com 'cn=newgroup,ou=groups,dc=example,dc=com' --json group.json",
-        ],
-        "next_steps": [
-            "Use search to verify entry was added",
-            "Add additional attributes with --attr option",
-        ],
-        "common_errors": [
-            "Missing required attributes for object class",
-            "DN already exists",
-            "Parent DN doesn't exist",
+            "validate search (uid=admin) cn",
+            "validate connect ldap.example.com 636 --ssl",
         ],
     },
-    "modify": {
-        "syntax": "modify <host> <dn> [options]",
-        "examples": [
-            "modify ldap.example.com 'cn=user1,ou=people,dc=example,dc=com' --add mail=user1@example2.com",
-            "modify ldap.example.com 'cn=user1,ou=people,dc=example,dc=com' --replace mobile=555-1234",
-            "modify ldap.example.com 'cn=user1,ou=people,dc=example,dc=com' --delete mail=user1@example.com",
-        ],
-        "next_steps": [
-            "Use search to verify changes",
-            "Combine multiple modifications in one command",
-        ],
-        "common_errors": [
-            "Attempting to modify non-existent entry",
-            "Missing required attributes",
-            "Deleting a value that doesn't exist",
-        ],
+    "suggest": {"syntax": "suggest", "examples": ["suggest"]},
+    "history": {
+        "syntax": "history [search|base|host]",
+        "examples": ["history", "history search"],
+        "common_errors": ["The history type must be search, base or host"],
     },
-    "delete": {
-        "syntax": "delete <host> <dn> [options]",
-        "examples": [
-            "delete ldap.example.com 'cn=user1,ou=people,dc=example,dc=com'",
-            "delete ldap.example.com 'ou=people,dc=example,dc=com' --recursive",
-        ],
-        "next_steps": [
-            "Use --recursive for subtree deletion",
-            "Use search to verify deletion",
-        ],
-        "common_errors": [
-            "Entry has children (use --recursive)",
-            "Entry doesn't exist",
-            "Insufficient permissions",
-        ],
-    },
-    "rename": {
-        "syntax": "rename <host> <dn> <new_rdn> [options]",
-        "examples": [
-            "rename ldap.example.com 'cn=user1,ou=people,dc=example,dc=com' 'cn=user1renamed'",
-            "rename ldap.example.com 'cn=user1,ou=people,dc=example,dc=com' 'cn=user1' --parent 'ou=admins,dc=example,dc=com'",
-        ],
-        "next_steps": [
-            "Use search to verify the rename",
-            "Use --parent to move entry to different location",
-        ],
-        "common_errors": [
-            "New RDN already exists",
-            "Parent DN doesn't exist",
-            "Missing required attributes in new RDN",
-        ],
-    },
-    "interactive": {
-        "syntax": "interactive [options]",
-        "examples": [
-            "interactive",
-            "interactive --host ldap.example.com --base 'dc=example,dc=com'",
-        ],
-        "next_steps": [
-            "Use 'help' command to see available commands",
-            "Use 'connect' to establish connection",
-            "Use 'ls' to list entries",
-        ],
-        "common_errors": [
-            "Not connected to server (use connect command)",
-            "Not setting base DN (use cd command)",
-        ],
-    },
+    "help": {"syntax": "help [command]", "examples": ["help", "help search"]},
+    "exit": {"syntax": "exit", "examples": ["exit"]},
+    "quit": {"syntax": "quit", "examples": ["quit"]},
 }
 
 
-def _split_command(command_str: str) -> List[str]:
+# Commands about the shell itself; they do not become the "current operation"
+META_COMMANDS = {"help", "suggest", "validate", "history", "exit", "quit"}
+
+
+def split_command(command_str: str) -> List[str]:
     """Split a command line like a shell does; fall back to whitespace."""
     try:
         return shlex.split(command_str)
@@ -176,548 +109,278 @@ def _split_command(command_str: str) -> List[str]:
         return command_str.split()
 
 
-def _discover_commands(cli_group) -> Dict[str, Dict[str, Any]]:
-    """Auto-discover commands from a Click CLI group.
-
-    Introspects the Click group to build command patterns dynamically,
-    extracting syntax from arguments and options. The static COMMAND_PATTERNS
-    dict is used as a fallback for examples and common_errors (which can't
-    be auto-discovered).
-
-    Args:
-        cli_group: A Click Group object.
-
-    Returns:
-        Dict mapping command names to pattern dicts with 'syntax' key.
-    """
-    discovered: Dict[str, Dict[str, Any]] = {}
-    try:
-        for name, cmd in cli_group.commands.items():
-            parts = [name]
-            # Positional arguments only; options are summarized as [options]
-            for param in cmd.params:
-                if isinstance(param, click.Argument):
-                    parts.append(
-                        f"<{param.name}>" if param.required else f"[<{param.name}>]"
-                    )
-            parts.append("[options]")
-            syntax = " ".join(parts)
-
-            # Merge with static patterns if available
-            static = COMMAND_PATTERNS.get(name, {})
-            discovered[name] = {
-                "syntax": syntax,
-                "examples": static.get("examples", []),
-                "next_steps": static.get("next_steps", []),
-                "common_errors": static.get("common_errors", []),
-            }
-    except Exception:
-        pass  # Graceful fallback to static patterns
-    return discovered
-
-
 class HelpContext:
     """
-    Singleton class that tracks command history and operational context
-
-    Maintains a record of commands executed, their results, and the current
-    operation state to provide context-aware help and suggestions.
+    Tracks the shell session for context-aware help.
 
     Attributes:
-        _instance: Singleton instance reference
-        command_history: Deque of recent commands
-        current_context: Dictionary containing current operation state
-        session_state: Connection and authentication state
-        user_preferences: User-defined settings and preferences
+        command_history: Deque of recent command lines
+        current_context: The current command, base DN and last search results
+        session_state: Connection, authentication and TLS state
+        command_frequency: How often each command was used
     """
 
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(HelpContext, cls).__new__(cls)
-            cls._instance._initialize()
-        return cls._instance
-
-    def _initialize(self):
-        """Initialize context tracking structures"""
-        # Auto-discover commands from CLI group (lazy import to avoid circulars)
-        try:
-            from .ldapie import cli as cli_group
-
-            discovered = _discover_commands(cli_group)
-            if discovered:
-                COMMAND_PATTERNS.update(discovered)
-        except ImportError:
-            pass
-
+    def __init__(self) -> None:
         self.command_history: Deque[str] = deque(maxlen=20)
         self.current_context: Dict[str, Any] = {
             "command": None,
-            "subcommand": None,
-            "host": None,
             "base_dn": None,
-            "filter": None,
-            "attributes": [],
             "search_results": None,
-            "last_entry": None,
-            "operation_result": None,
         }
         self.session_state = {
             "connected": False,
             "authenticated": False,
-            "server": None,
-            "connection": None,
             "ssl_enabled": False,
         }
-        self.user_preferences = {
-            "theme": "dark",
-            "output_format": "rich",
-            "page_size": 100,
-        }
-        self.command_frequency = defaultdict(int)
-        self.error_history = []
+        self.command_frequency: Dict[str, int] = defaultdict(int)
 
     def add_command(self, command_str: str) -> None:
-        """
-        Add a command to the history
-
-        Args:
-            command_str: The command string executed by the user
-
-        Example:
-            >>> ctx = HelpContext()
-            >>> ctx.add_command("search ldap.example.com 'dc=example,dc=com'")
-        """
+        """Record a command line; a directory operation becomes the current one."""
         self.command_history.append(command_str)
-
-        # Parse command to update context
-        parts = _split_command(command_str)
+        parts = split_command(command_str)
         if not parts:
             return
-
-        # Update command frequency for statistics
-        cmd = parts[0]
-        self.command_frequency[cmd] += 1
-
-        # Basic context update based on command
-        if cmd in COMMAND_PATTERNS:
-            self.current_context["command"] = cmd
-
-            # Extract host and base_dn where applicable
-            if len(parts) > 1 and cmd in [
-                "search",
-                "info",
-                "add",
-                "modify",
-                "delete",
-                "rename",
-                "compare",
-                "schema",
-            ]:
-                self.current_context["host"] = parts[1]
-
-            if len(parts) > 2 and cmd in [
-                "search",
-                "add",
-                "modify",
-                "delete",
-                "rename",
-                "compare",
-            ]:
-                self.current_context["base_dn"] = parts[2]
-
-            if len(parts) > 3 and cmd == "search":
-                self.current_context["filter"] = parts[3]
-
-    def add_error(self, command_str: str, error_msg: str) -> None:
-        """
-        Record a command error for analysis
-
-        Args:
-            command_str: Command that caused the error
-            error_msg: Error message produced
-        """
-        self.error_history.append(
-            {
-                "command": command_str,
-                "error": error_msg,
-                "timestamp": self._get_timestamp(),
-            }
-        )
+        self.command_frequency[parts[0]] += 1
+        if parts[0] in COMMAND_PATTERNS and parts[0] not in META_COMMANDS:
+            self.current_context["command"] = parts[0]
 
     def update_session_state(
-        self,
-        connected: Optional[bool] = None,
-        authenticated: Optional[bool] = None,
-        server: Any = None,
-        connection: Any = None,
-        ssl_enabled: Optional[bool] = None,
+        self, connected: bool, authenticated: bool, ssl_enabled: bool
     ) -> None:
-        """
-        Update the current session state
-
-        Args:
-            connected: Whether connected to a server
-            authenticated: Whether authenticated
-            server: Server object
-            connection: Connection object
-            ssl_enabled: Whether SSL is enabled
-        """
-        if connected is not None:
-            self.session_state["connected"] = connected
-        if authenticated is not None:
-            self.session_state["authenticated"] = authenticated
-        if server is not None:
-            self.session_state["server"] = server
-        if connection is not None:
-            self.session_state["connection"] = connection
-        if ssl_enabled is not None:
-            self.session_state["ssl_enabled"] = ssl_enabled
-
-    def update_operation_result(self, result: Any) -> None:
-        """Store the result of the last operation"""
-        self.current_context["operation_result"] = result
-
-    def update_search_results(self, results: List[Any]) -> None:
-        """Store search results in the context"""
-        self.current_context["search_results"] = results
-
-    def get_suggestions(self) -> Dict[str, Any]:
-        """
-        Get context-aware suggestions based on current state
-
-        Returns a dictionary of suggestions including next commands,
-        examples, tips, and corrections.
-
-        Returns:
-            Dictionary with suggestions
-        """
-        suggestions: Dict[str, List[Any]] = {
-            "next_commands": [],
-            "examples": [],
-            "tips": [],
-            "corrections": [],
+        """Record the connection state."""
+        self.session_state = {
+            "connected": connected,
+            "authenticated": authenticated,
+            "ssl_enabled": ssl_enabled,
         }
 
-        # Get current command for context
-        current_cmd = self.current_context.get("command")
+    def update_search_results(self, results: List[Any]) -> None:
+        """Store the results of the last search."""
+        self.current_context["search_results"] = results
 
-        # Add general suggestions based on usage patterns
-        if current_cmd:
-            # Add next steps from command patterns
-            cmd_info = COMMAND_PATTERNS.get(current_cmd, {})
-            suggestions["next_commands"] = cmd_info.get("next_steps", [])
+    def get_suggestions(self) -> Dict[str, List[str]]:
+        """Next steps, examples and tips for the current command and session state."""
+        cmd_info = COMMAND_PATTERNS.get(self.current_context.get("command") or "", {})
+        suggestions: Dict[str, List[str]] = {
+            "next_commands": list(cmd_info.get("next_steps", [])),
+            "examples": list(cmd_info.get("examples", [])),
+            "tips": list(cmd_info.get("common_errors", [])),
+        }
 
-            # Add examples related to current command
-            suggestions["examples"] = cmd_info.get("examples", [])
+        connected = self.session_state["connected"]
+        if not connected:
+            suggestions["next_commands"].append(
+                "Connect first: connect ldap.example.com"
+            )
+        elif not self.current_context.get("base_dn"):
+            suggestions["next_commands"].append(
+                "Set the base DN: base dc=example,dc=com"
+            )
 
-            # Add common error tips
-            suggestions["tips"] = cmd_info.get("common_errors", [])
-
-        # If we have search results, suggest operations on those results
         if self.current_context.get("search_results"):
             suggestions["next_commands"].extend(
                 [
-                    "Use --json to output results in JSON format",
-                    "Use --tree to view results in a hierarchical tree",
-                    "Use --csv to export results to CSV",
-                    "Use compare to compare two entries from the results",
+                    "Look up an entry's object class: schema <objectClass>",
+                    "Reuse an earlier filter: history search",
                 ]
             )
 
-        # Add authentication suggestions if not authenticated
-        if not self.session_state.get("authenticated") and self.session_state.get(
-            "connected"
-        ):
+        if connected and not self.session_state["authenticated"]:
             suggestions["tips"].append(
-                "Use -u and -p options to authenticate for more privileges"
+                "The bind is anonymous; reconnect with a bind DN for more privileges"
             )
-
-        # Add SSL suggestions if not using SSL
-        if not self.session_state.get("ssl_enabled") and self.session_state.get(
-            "connected"
-        ):
-            suggestions["tips"].append("Consider using --ssl for secure connection")
+        if connected and not self.session_state["ssl_enabled"]:
+            suggestions["tips"].append(
+                "The connection is not encrypted; reconnect with --ssl or --starttls"
+            )
 
         return suggestions
 
     def get_command_help(self, command: str) -> Dict[str, Any]:
-        """
-        Get detailed help for a specific command
+        """Help for a command, or an error with a "did you mean" suggestion."""
+        cmd_info = COMMAND_PATTERNS.get(command)
+        if cmd_info is not None:
+            return cmd_info
 
-        Args:
-            command: Command to get help for
-
-        Returns:
-            Dictionary with command help information
-        """
-        cmd_info = COMMAND_PATTERNS.get(command, {})
-        if not cmd_info:
-            # Try to find closest command
-            all_commands = list(COMMAND_PATTERNS.keys())
-            matches = get_close_matches(command, all_commands, n=1, cutoff=0.6)
-
-            if matches:
-                return {
-                    "error": f"Command '{command}' not found. Did you mean '{matches[0]}'?",
-                    "suggested_command": matches[0],
-                    "help": COMMAND_PATTERNS.get(matches[0], {}),
-                }
-            else:
-                return {"error": f"Command '{command}' not found."}
-
-        return cmd_info
+        matches = get_close_matches(command, list(COMMAND_PATTERNS), n=1, cutoff=0.6)
+        if matches:
+            return {
+                "error": f"Command '{command}' not found. Did you mean '{matches[0]}'?",
+                "suggested_command": matches[0],
+            }
+        return {"error": f"Command '{command}' not found."}
 
     def analyze_command(self, command_str: str) -> Dict[str, Any]:
-        """
-        Analyze a command string for validation and suggestions
-
-        Args:
-            command_str: Command string to analyze
-
-        Returns:
-            Dictionary with analysis results
-        """
-        parts = _split_command(command_str)
+        """Check that a command exists and has its required arguments."""
+        parts = split_command(command_str)
         if not parts:
             return {"error": "Empty command"}
 
         cmd = parts[0]
+        cmd_info = self.get_command_help(cmd)
+        if "error" in cmd_info:
+            return cmd_info
 
-        # Check if command exists
-        if cmd not in COMMAND_PATTERNS:
-            # Try to find closest command
-            all_commands = list(COMMAND_PATTERNS.keys())
-            matches = get_close_matches(cmd, all_commands, n=3, cutoff=0.6)
-
-            if matches:
-                return {
-                    "error": f"Command '{cmd}' not found. Did you mean '{matches[0]}'?",
-                    "suggested_commands": matches,
-                }
-            else:
-                return {"error": f"Command '{cmd}' not found."}
-
-        # Check argument count
-        cmd_info = COMMAND_PATTERNS.get(cmd, {})
-        syntax = cmd_info.get("syntax", "")
-        syntax_parts = syntax.split()
-
-        # Count required arguments (those without [ ])
-        required_args = [
-            p for p in syntax_parts if not (p.startswith("[") and p.endswith("]"))
-        ]
-        required_count = len(required_args) - 1  # Subtract 1 for the command itself
-
-        if len(parts) < required_count + 1:
+        # Required arguments are the syntax words not wrapped in [ ]
+        syntax = cmd_info["syntax"]
+        required_count = sum(
+            1 for word in syntax.split()[1:] if not word.startswith("[")
+        )
+        if len(parts) - 1 < required_count:
             return {
                 "error": f"Not enough arguments for '{cmd}'. Syntax: {syntax}",
                 "syntax": syntax,
                 "examples": cmd_info.get("examples", []),
             }
 
-        # Basic validation passed, return command info
         return {
             "command": cmd,
             "arguments": parts[1:],
             "syntax": syntax,
             "examples": cmd_info.get("examples", []),
-            "next_steps": cmd_info.get("next_steps", []),
-            "common_errors": cmd_info.get("common_errors", []),
         }
-
-    def get_help_for_validation_error(
-        self, command_str: str, error_msg: str
-    ) -> Dict[str, Any]:
-        """
-        Get help for a validation error
-
-        Args:
-            command_str: Command that caused the error
-            error_msg: Error message
-
-        Returns:
-            Dictionary with help information
-        """
-        parts = _split_command(command_str)
-        if not parts:
-            return {"error": "Empty command"}
-
-        cmd = parts[0]
-        cmd_info = COMMAND_PATTERNS.get(cmd, {})
-
-        # Look for common error patterns
-        common_errors = {
-            "no such object": "The specified DN does not exist",
-            "already exists": "Entry already exists",
-            "invalid filter": "The LDAP filter syntax is incorrect",
-            "insufficient access rights": "You don't have permission for this operation",
-            "invalid DN syntax": "The DN syntax is incorrect - check for proper escaping and formatting",
-        }
-
-        help_info = {
-            "error": error_msg,
-            "syntax": cmd_info.get("syntax", ""),
-            "examples": cmd_info.get("examples", []),
-        }
-
-        # Add specific help based on error message pattern
-        for pattern, message in common_errors.items():
-            if pattern in error_msg.lower():
-                help_info["suggestion"] = message
-                break
-
-        return help_info
-
-    def _get_timestamp(self):
-        """Get current timestamp for history entries"""
-        import datetime
-
-        return datetime.datetime.now().isoformat()
 
 
 class CommandValidator:
-    """
-    Validates commands before execution
-
-    Provides a preview of command execution and validates parameters
-    without actually performing the operation.
-    """
+    """Validates a shell command without running it and previews its effect."""
 
     def __init__(self, help_context: Optional[HelpContext] = None):
         self.help_context = help_context or HelpContext()
 
     def validate_command(self, command_str: str) -> Dict[str, Any]:
-        """
-        Validate a command without executing it
+        """Return either an "error" or a "validation" with a "preview".
 
-        Args:
-            command_str: Command string to validate
-
-        Returns:
-            Dictionary with validation results
+        "warning" and "suggestion" may accompany either.
         """
-        # First use the analyzer to check basic command structure
         analysis = self.help_context.analyze_command(command_str)
         if "error" in analysis:
             return analysis
 
-        cmd = analysis["command"]
-
-        # Perform command-specific validation
-        if cmd == "search":
-            return self._validate_search(command_str, analysis)
-        elif cmd == "add":
-            return self._validate_add(command_str, analysis)
-        elif cmd == "modify":
-            return self._validate_modify(command_str, analysis)
-        elif cmd == "delete":
-            return self._validate_delete(command_str, analysis)
-        elif cmd == "rename":
-            return self._validate_rename(command_str, analysis)
-
-        # For commands without specific validation, return the basic analysis
+        validator: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = getattr(
+            self, f"_validate_{analysis['command']}", None
+        )
+        if validator is not None:
+            return validator(analysis)
         return {
             **analysis,
             "validation": "Command structure looks valid",
-            "preview": f"Command would execute: {command_str}",
+            "preview": f"Would run: {command_str}",
         }
 
-    def _validate_search(
-        self, command_str: str, analysis: Dict[str, Any]
+    @staticmethod
+    def _error(
+        analysis: Dict[str, Any], message: str, suggestion: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Validate search command"""
+        result = {
+            "error": message,
+            "syntax": analysis["syntax"],
+            "examples": analysis["examples"],
+        }
+        if suggestion:
+            result["suggestion"] = suggestion
+        return result
+
+    def _validate_connect(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
         args = analysis["arguments"]
+        unknown = [a for a in args if a.startswith("--") and a not in CONNECT_FLAGS]
+        if unknown:
+            return self._error(
+                analysis,
+                f"Unknown option '{unknown[0]}'. Options: {', '.join(CONNECT_FLAGS)}",
+            )
 
-        # Need at least host and base_dn
-        if len(args) < 2:
-            return {
-                "error": "Not enough arguments for search command",
-                "syntax": analysis["syntax"],
-                "examples": analysis["examples"],
-            }
+        positional = [a for a in args if not a.startswith("--")]
+        host, rest = positional[0], positional[1:]
+        port = 636 if "--ssl" in args else 389
+        if rest and rest[0].isdigit():
+            port = int(rest.pop(0))
+            if not 0 < port < 65536:
+                return self._error(analysis, f"Port {port} is out of range")
+        bind_dn = rest[0] if rest else None
+        if bind_dn:
+            try:
+                validate_dn(bind_dn)
+            except ValueError as e:
+                return self._error(analysis, str(e))
 
-        # Check for filter syntax if provided
-        if len(args) > 2:
-            filter_arg = args[2]
-            if not (filter_arg.startswith("(") and filter_arg.endswith(")")):
-                return {
-                    "warning": "LDAP filter should be enclosed in parentheses",
-                    "suggestion": f"Try: search {args[0]} {args[1]} '({filter_arg})'",
-                    **analysis,
-                }
+        encrypted = "--ssl" in args or "--starttls" in args
+        result = {
+            **analysis,
+            "validation": "Connect command looks valid",
+            "preview": f"Would connect to {host}:{port} as {bind_dn or 'anonymous'}"
+            + (" over TLS" if encrypted else ""),
+        }
+        if "--no-verify" in args:
+            result["warning"] = "Certificate verification would be disabled"
+        elif not encrypted:
+            result["warning"] = "The connection would not be encrypted"
+            result["suggestion"] = "Add --ssl or --starttls"
+        return result
 
+    def _validate_base(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        dn = analysis["arguments"][0]
+        try:
+            validate_dn(dn)
+        except ValueError as e:
+            return self._error(analysis, str(e))
         return {
+            **analysis,
+            "validation": "Base command looks valid",
+            "preview": f"Would set the base DN to {dn}",
+        }
+
+    def _validate_search(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        args = analysis["arguments"]
+        filter_query = args[0] if args else "(objectClass=*)"
+        try:
+            validate_search_filter(filter_query)
+        except ValueError as e:
+            suggestion = None
+            if not filter_query.startswith("("):
+                suggestion = f"Try: search ({filter_query})"
+            return self._error(analysis, f"Invalid LDAP filter: {e}", suggestion)
+
+        base_dn = self.help_context.current_context.get("base_dn")
+        preview = (
+            f"Would search below {base_dn or '<base DN>'} with filter {filter_query}"
+        )
+        if len(args) > 1:
+            preview += f", attributes: {', '.join(args[1:])}"
+        result = {
             **analysis,
             "validation": "Search command looks valid",
-            "preview": f"Would search {args[0]} with base DN {args[1]}",
+            "preview": preview,
         }
+        if not self.help_context.session_state["connected"]:
+            result["warning"] = "Not connected; use connect first"
+        elif not base_dn:
+            result["warning"] = "The base DN is not set; use base <dn> first"
+        return result
 
-    def _validate_add(
-        self, command_str: str, analysis: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate add command"""
-        # Implementation for add command validation
+    def _validate_schema(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        args = analysis["arguments"]
+        if args == ["--attr"]:
+            return self._error(analysis, "--attr needs an attribute name")
+        if args[:1] == ["--attr"]:
+            preview = f"Would show the attribute type {args[1]}"
+        elif args:
+            preview = f"Would show the object class {args[0]}"
+        else:
+            preview = "Would list all object classes"
         return {
             **analysis,
-            "validation": "Add command structure looks valid",
-            "preview": "Would add new entry to the directory",
+            "validation": "Schema command looks valid",
+            "preview": preview,
         }
 
-    def _validate_modify(
-        self, command_str: str, analysis: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate modify command"""
-        # Implementation for modify command validation
+    def _validate_history(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        args = analysis["arguments"]
+        if args and args[0] not in ("search", "base", "host"):
+            return self._error(
+                analysis, f"Unknown history type '{args[0]}'; use search, base or host"
+            )
         return {
             **analysis,
-            "validation": "Modify command structure looks valid",
-            "preview": "Would modify the specified entry",
+            "validation": "History command looks valid",
+            "preview": f"Would show the {args[0] if args else 'whole'} history",
         }
-
-    def _validate_delete(
-        self, command_str: str, analysis: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate delete command"""
-        # Check for recursive flag on delete
-        if "--recursive" not in command_str and "-r" not in command_str:
-            return {
-                **analysis,
-                "validation": "Delete command structure looks valid",
-                "warning": "Note: This will only delete the entry if it has no children",
-                "suggestion": "Add --recursive flag to delete the entry and all its children",
-                "preview": "Would delete the specified entry",
-            }
-
-        return {
-            **analysis,
-            "validation": "Delete command structure looks valid",
-            "warning": "This will delete the entry and all its children recursively",
-            "preview": "Would recursively delete the specified entry and all children",
-        }
-
-    def _validate_rename(
-        self, command_str: str, analysis: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate rename command"""
-        # Implementation for rename command validation
-        return {
-            **analysis,
-            "validation": "Rename command structure looks valid",
-            "preview": "Would rename the specified entry",
-        }
-
-
-# For testing
-if __name__ == "__main__":
-    # Example usage
-    ctx = HelpContext()
-    ctx.add_command("search ldap.example.com 'dc=example,dc=com'")
-    print(ctx.get_suggestions())
-
-    validator = CommandValidator(ctx)
-    result = validator.validate_command(
-        "search ldap.example.com 'dc=example,dc=com' objectClass=person"
-    )
-    print(json.dumps(result, indent=2))

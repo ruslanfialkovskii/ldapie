@@ -435,170 +435,36 @@ def interactive_shell_demo(server, conn):
 
     console.print("[bold]Interactive Mode Example:[/bold]")
     console.print(Panel("""
-[cyan]ldapie>[/cyan] connect ldap.example.com
-[green]✓[/green] Connected to ldap.example.com
+[cyan]ldapie>[/cyan] connect ldap.example.com 389 cn=admin,dc=example,dc=com --starttls
+Enter password for cn=admin,dc=example,dc=com:
+[green]Connected to ldap.example.com[/green]
 
-[cyan]ldapie>[/cyan] cd dc=example,dc=com
-[green]✓[/green] Current base DN set to: dc=example,dc=com
+[cyan]ldapie>[/cyan] base dc=example,dc=com
+Base DN set to: dc=example,dc=com
 
-[cyan]ldapie>[/cyan] ls
-[yellow]ou=people[/yellow]
-[yellow]ou=groups[/yellow]
-
-[cyan]ldapie>[/cyan] cd ou=people
-[green]✓[/green] Current base DN set to: ou=people,dc=example,dc=com
-
-[cyan]ldapie>[/cyan] search "(uid=j*)" cn mail title
+[cyan]ldapie>[/cyan] search (uid=j*) cn mail title
 [Displaying search results...]
 
-[cyan]ldapie>[/cyan] show 0
-[Displaying detailed entry...]
+[cyan]ldapie>[/cyan] schema inetOrgPerson
+[Displaying the object class...]
 
-[cyan]ldapie>[/cyan] help
-[Displaying help...]
+[cyan]ldapie>[/cyan] search ?
+[Context help for the search command...]
+
+[cyan]ldapie>[/cyan] history
+[Recent filters, base DNs and hosts...]
     """))
 
     console.print("\n[bold]Shell Completion:[/bold]")
     console.print(Panel("""
-# Install shell completion
-[cyan]$[/cyan] ./ldapie --install-completion
+# Install completion for the current shell (bash, zsh or fish)
+[cyan]$[/cyan] ldapie --install-completion
 
-# Show completion script
-[cyan]$[/cyan] ./ldapie --show-completion
+# Show the line to add to the shell config instead
+[cyan]$[/cyan] ldapie --show-completion
     """))
 
     pause_demo()
 
     # In auto mode, we don't do the interactive session
     console.print("[cyan]Skipping interactive session in automated demo mode[/cyan]")
-
-
-def simulated_interactive_session(server, conn):
-    """Simulate an interactive LDAP session"""
-    section_header("Simulated Interactive Session")
-
-    console.print("[bold cyan]LDAPie Interactive Shell[/bold cyan]")
-    console.print("[green]Type 'help' for available commands, 'exit' to quit[/green]")
-
-    base_dn = ""
-
-    while True:
-        console.print(f"\n[cyan]ldapie {base_dn}>[/cyan] ", end="")
-        cmd = input()
-
-        if cmd.lower() == "exit" or cmd.lower() == "quit":
-            console.print("[green]Exiting interactive shell[/green]")
-            break
-
-        elif cmd.lower() == "help":
-            console.print(
-                Panel(
-                    """
-Available commands:
-  [bold]connect[/bold] <host> [port] [user] [--ssl]  Connect to LDAP server
-  [bold]cd[/bold] <dn>                               Change base DN
-  [bold]ls[/bold] [filter]                           List entries in current base DN
-  [bold]search[/bold] <filter> [attributes...]       Search for entries
-  [bold]show[/bold] <index>                          Show details of entry from last search
-  [bold]add[/bold] <dn> <objectClass> <attrs...>     Add a new entry
-  [bold]delete[/bold] <dn> [--recursive]             Delete an entry
-  [bold]modify[/bold] <dn> <operation> <attr=value>  Modify an entry
-  [bold]exit[/bold], [bold]quit[/bold]               Exit interactive shell
-  [bold]help[/bold]                                  Show this help
-            """,
-                    title="Help",
-                )
-            )
-
-        elif cmd.lower().startswith("connect"):
-            console.print("[green]✓[/green] Connected to ldap.example.com")
-
-        elif cmd.lower().startswith("cd"):
-            if " " in cmd:
-                base_dn = cmd.split(" ", 1)[1]
-                console.print(f"[green]✓[/green] Current base DN set to: {base_dn}")
-            else:
-                base_dn = ""
-                console.print("[green]✓[/green] Current base DN cleared")
-
-        elif cmd.lower() == "ls":
-            if base_dn.startswith("ou=people"):
-                console.print("[yellow]uid=jdoe[/yellow]")
-                console.print("[yellow]uid=jsmith[/yellow]")
-                console.print("[yellow]uid=admin[/yellow]")
-                console.print("[yellow]uid=mwhite[/yellow]")
-            elif base_dn.startswith("ou=groups"):
-                console.print("[yellow]cn=admins[/yellow]")
-                console.print("[yellow]cn=developers[/yellow]")
-            elif base_dn.startswith("dc=example"):
-                console.print("[yellow]ou=people[/yellow]")
-                console.print("[yellow]ou=groups[/yellow]")
-            else:
-                console.print("[yellow]dc=example,dc=com[/yellow]")
-
-        elif cmd.lower().startswith("search"):
-            console.print("[green]✓[/green] Search completed, 3 entries found")
-            console.print("\n[cyan]Results:[/cyan]")
-            console.print(
-                "[dim]0.[/dim] [yellow]uid=jdoe,ou=people,dc=example,dc=com[/yellow]"
-            )
-            console.print(
-                "[dim]1.[/dim] [yellow]uid=jsmith,ou=people,dc=example,dc=com[/yellow]"
-            )
-            console.print(
-                "[dim]2.[/dim] [yellow]uid=admin,ou=people,dc=example,dc=com[/yellow]"
-            )
-
-        elif cmd.lower().startswith("show"):
-            if " " in cmd:
-                try:
-                    index = int(cmd.split(" ", 1)[1])
-                    console.print(f"\n[bold]Entry Details (index {index}):[/bold]")
-
-                    if index == 0:
-                        dn = "uid=jdoe,ou=people,dc=example,dc=com"
-                        conn.search(dn, "(objectClass=*)", attributes=["*"])
-                        output.output_rich(conn.entries, console)
-                    elif index == 1:
-                        dn = "uid=jsmith,ou=people,dc=example,dc=com"
-                        conn.search(dn, "(objectClass=*)", attributes=["*"])
-                        output.output_rich(conn.entries, console)
-                    elif index == 2:
-                        dn = "uid=admin,ou=people,dc=example,dc=com"
-                        conn.search(dn, "(objectClass=*)", attributes=["*"])
-                        output.output_rich(conn.entries, console)
-                    else:
-                        console.print("[red]Invalid index[/red]")
-                except ValueError:
-                    console.print("[red]Invalid index[/red]")
-            else:
-                console.print("[red]Missing index[/red]")
-
-        elif (
-            cmd.lower().startswith("add")
-            or cmd.lower().startswith("delete")
-            or cmd.lower().startswith("modify")
-        ):
-            console.print("[green]✓[/green] Operation completed successfully")
-
-        else:
-            console.print(
-                "[red]Unknown command. Type 'help' for available commands.[/red]"
-            )
-
-    # Conclusion
-    section_header("Demo Complete")
-    console.print("""
-[bold green]Demo complete! You've seen the basic functionality of LDAPie.[/bold green]
-
-To use LDAPie with a real LDAP server, you can run commands like:
-
-    ./ldapie search ldap.example.com "dc=example,dc=com" "(objectClass=person)"
-    ./ldapie info ldap.example.com
-    ./ldapie schema ldap.example.com
-
-For more information and options, run:
-
-    ./ldapie --help
-    ./ldapie search --help
-    """)

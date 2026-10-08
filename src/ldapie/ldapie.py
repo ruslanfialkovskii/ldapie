@@ -66,7 +66,6 @@ from . import schema as schema_utils
 from . import search as search_utils
 from . import utils as general_utils
 from .config import load_config
-from .help_context import HelpContext
 from .ldif_parser import parse_ldif
 from .rich_formatter import add_rich_help_option
 
@@ -292,9 +291,6 @@ def handle_connection_error(func):
         if ctx and isinstance(ctx.obj, dict):
             is_debug = ctx.obj.get("DEBUG", False)
 
-        command_str = func.__name__.replace("_command", "")
-        help_context = HelpContext()
-
         try:
             if is_debug:
                 err_console.print(
@@ -330,7 +326,6 @@ def handle_connection_error(func):
         if is_debug:
             err_console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
             err_console.print(traceback.format_exc())
-        help_context.add_error(command_str, error_msg)
         sys.exit(1)
 
     return wrapper
@@ -670,11 +665,6 @@ def search_command(
     if len(entries) == 0:
         err_console.print("[warning]No entries found.[/warning]")
         return
-
-    help_context = HelpContext()
-    help_context.current_context["base_dn"] = base_dn
-    help_context.current_context["filter"] = filter_query
-    help_context.current_context["attributes"] = attributes
 
     err_console.print(f"[success]Found {len(entries)} entries.[/success]")
 

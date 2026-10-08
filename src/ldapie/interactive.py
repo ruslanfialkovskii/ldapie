@@ -13,6 +13,7 @@ from typing import Any, Optional
 from ldap3 import ALL_ATTRIBUTES, SUBTREE, Connection, Server
 from ldap3.core.exceptions import LDAPException
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -81,11 +82,13 @@ class LDAPShell(cmd.Cmd):
                 self.history_file = None
 
         self._update_prompt()
+        self.help_context.current_context["base_dn"] = self.base_dn or None
         self.help_context.update_session_state(
             connected=self.connected,
-            server=self.server,
-            connection=self.conn,
-            authenticated=bool(self.conn and self.conn.bound),
+            authenticated=bool(conn is not None and conn.user),
+            ssl_enabled=bool(
+                conn is not None and (conn.server.ssl or conn.tls_started)
+            ),
         )
 
     def _update_prompt(self) -> None:
@@ -127,9 +130,7 @@ class LDAPShell(cmd.Cmd):
         """Show the help overlay for input ending in '?' instead of running it."""
         stripped = line.strip()
         if stripped.endswith("?") and stripped != "?":
-            show_help_overlay(
-                stripped[:-1].strip(), self.help_context, self.console, True
-            )
+            show_help_overlay(stripped[:-1].strip(), self.help_context, self.console)
             return ""
         return line
 
@@ -143,7 +144,6 @@ class LDAPShell(cmd.Cmd):
             return bool(super().onecmd(line))
         except Exception as e:  # pylint: disable=broad-except
             self.console.print(f"[error]Error: {e}[/error]")
-            self.help_context.add_error(line, str(e))
             return False
 
     def default(self, line: str) -> None:
@@ -162,23 +162,28 @@ class LDAPShell(cmd.Cmd):
 
         result = CommandValidator(self.help_context).validate_command(arg)
 
+        # Help text contains [brackets]; escape it so Rich prints it as-is
         if "error" in result:
-            self.console.print(f"[error]Error: {result['error']}[/error]")
+            self.console.print(f"[error]Error: {escape(result['error'])}[/error]")
             if "suggestion" in result:
-                self.console.print(f"[info]Suggestion: {result['suggestion']}[/info]")
+                self.console.print(
+                    f"[info]Suggestion: {escape(result['suggestion'])}[/info]"
+                )
             if "examples" in result:
                 self.console.print("\n[bold]Examples:[/bold]")
                 for example in result["examples"]:
-                    self.console.print(f"  [command]{example}[/command]")
+                    self.console.print(f"  [command]{escape(example)}[/command]")
         else:
-            if "validation" in result:
-                self.console.print(f"[success]✓ {result['validation']}[/success]")
-            if "preview" in result:
-                self.console.print(f"\n[bold]Preview:[/bold] {result['preview']}")
+            self.console.print(f"[success]✓ {escape(result['validation'])}[/success]")
+            self.console.print(f"\n[bold]Preview:[/bold] {escape(result['preview'])}")
             if "warning" in result:
-                self.console.print(f"\n[warning]Warning: {result['warning']}[/warning]")
+                self.console.print(
+                    f"\n[warning]Warning: {escape(result['warning'])}[/warning]"
+                )
             if "suggestion" in result:
-                self.console.print(f"\n[info]Suggestion: {result['suggestion']}[/info]")
+                self.console.print(
+                    f"\n[info]Suggestion: {escape(result['suggestion'])}[/info]"
+                )
 
     def do_connect(self, arg: str) -> None:
         """
@@ -222,7 +227,6 @@ class LDAPShell(cmd.Cmd):
             server, conn = config.get_connection()
         except LDAPException as e:
             self.console.print(f"[error]Connection failed: {e}[/error]")
-            self.help_context.add_error("connect " + arg, str(e))
             return
 
         if self.conn is not None and self.conn is not conn:
@@ -238,9 +242,7 @@ class LDAPShell(cmd.Cmd):
         self.help_context.update_session_state(
             connected=True,
             authenticated=username is not None,
-            server=self.server,
-            connection=self.conn,
-            ssl_enabled=use_ssl,
+            ssl_enabled=use_ssl or "--starttls" in flags,
         )
 
     def do_base(self, arg: str) -> None:
@@ -301,7 +303,6 @@ class LDAPShell(cmd.Cmd):
             )
         except LDAPException as e:
             self.console.print(f"[error]Search failed: {e}[/error]")
-            self.help_context.add_error("search " + arg, str(e))
             return
 
         self.query_history.add_search(filter_query)
@@ -361,21 +362,19 @@ class LDAPShell(cmd.Cmd):
         if suggestions["next_commands"]:
             self.console.print("\n[bold]Next Steps[/bold]")
             for suggestion in suggestions["next_commands"]:
-                self.console.print(f"  [success]• {suggestion}[/success]")
+                self.console.print(f"  [success]• {escape(suggestion)}[/success]")
 
         if suggestions["examples"]:
             self.console.print("\n[bold]Examples[/bold]")
             for example in suggestions["examples"]:
-                self.console.print(f"  [command]{example}[/command]")
+                self.console.print(f"  [command]{escape(example)}[/command]")
 
         if suggestions["tips"]:
             self.console.print("\n[bold]Tips[/bold]")
             for tip in suggestions["tips"]:
-                self.console.print(f"  [info]• {tip}[/info]")
+                self.console.print(f"  [info]• {escape(tip)}[/info]")
 
-        if not any(
-            [suggestions["next_commands"], suggestions["examples"], suggestions["tips"]]
-        ):
+        if not any(suggestions.values()):
             self.console.print(
                 "  No specific suggestions available for current context."
             )
@@ -419,11 +418,11 @@ class LDAPShell(cmd.Cmd):
             if cmd_help.get("examples"):
                 self.console.print("\n[bold]Examples:[/bold]")
                 for example in cmd_help["examples"]:
-                    self.console.print(f"  [command]{example}[/command]")
+                    self.console.print(f"  [command]{escape(example)}[/command]")
             if cmd_help.get("common_errors"):
                 self.console.print("\n[bold]Common Issues:[/bold]")
                 for tip in cmd_help["common_errors"]:
-                    self.console.print(f"  [info]• {tip}[/info]")
+                    self.console.print(f"  [info]• {escape(tip)}[/info]")
             return
 
         # Text, not markup: the usage lines contain [brackets]
@@ -434,11 +433,11 @@ class LDAPShell(cmd.Cmd):
         if suggestions["next_commands"]:
             self.console.print("\n[bold]Suggested Next Steps[/bold]")
             for suggestion in suggestions["next_commands"]:
-                self.console.print(f"  [success]• {suggestion}[/success]")
+                self.console.print(f"  [success]• {escape(suggestion)}[/success]")
         if suggestions["tips"]:
             self.console.print("\n[bold]Tips[/bold]")
             for tip in suggestions["tips"]:
-                self.console.print(f"  [info]• {tip}[/info]")
+                self.console.print(f"  [info]• {escape(tip)}[/info]")
 
 
 def start_interactive_session(

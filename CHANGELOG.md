@@ -5,7 +5,21 @@ All notable changes to the LDAPie project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-# 0.2.0 (2026-10-08)
+## Unreleased
+
+### Fixed
+- The interactive shell's `?` context help, `help <command>` and `validate` described the command-line commands (`search <host> <base_dn>`) instead of the shell's own (`search [filter] [attributes...]`).
+- The demo's interactive-shell example showed `cd`, `ls` and `show` commands that do not exist.
+- `LICENSE` contains the full GPL-3.0 text instead of a stub.
+
+### Removed
+- The hand-written `completion.bash`, `completion.zsh` and `completion.fish` scripts and the `make install-completion*` targets: they were out of date and overrode Click's own completion. Use `ldapie --install-completion`.
+
+### Changed
+- README rewritten around the 0.2.0 command set.
+- `.gitignore` no longer ignores every `*.json`, `*.ldif` and `*.csv` file.
+
+## 0.2.0 (2026-10-08)
 
 ### Security
 - STARTTLS now upgrades the connection before the bind; credentials were sent in clear text before.
@@ -40,27 +54,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependencies reduced to ldap3, rich, click (>= 8.0) and pyyaml; packaging is defined in `pyproject.toml` only (setup.py removed).
 - CI fails on black, isort, flake8 and mypy errors and tests Python 3.10-3.13; the Docker image runs as a non-root user.
 
-# 0.1.4 (2025-05-22)
-
-### Added
-- 
-
-### Changed
-- 
+## 0.1.4 (2025-05-22)
 
 ### Fixed
-- 
+- Release workflow fixes.
 
-# 0.1.3 (2025-05-22)
-
-### Added
-- 
-
-### Changed
-- 
+## 0.1.3 (2025-05-22)
 
 ### Fixed
-- 
+- Release workflow fixes.
+
+## 0.1.2 (2025-05-22)
+
+### Added
+- Automated release workflow and `scripts/bump_version.py`.
+- DEVELOPMENT.md and RELEASE.md.
 
 ## 0.1.1 (2025-05-22)
 

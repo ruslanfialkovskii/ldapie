@@ -18,7 +18,7 @@ LDAPie uses a GitHub Actions workflow to automate the release process. The workf
 To create a new release:
 
 1. Go to the GitHub repository Actions tab
-2. Select the "LDAPie Release Workflow" workflow
+2. Select the "LDAPie Release Workflow (Improved)" workflow
 3. Click "Run workflow"
 4. Configure the release with the following options:
 

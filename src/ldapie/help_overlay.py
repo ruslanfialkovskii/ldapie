@@ -1,358 +1,132 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Help Overlay for LDAPie
+Help overlay for the LDAPie interactive shell.
 
-This module provides an overlay UI for context-sensitive help that can be
-triggered with the '?' key during command input. It displays relevant
-suggestions, examples, and documentation based on the current command context.
-
-The help overlay can be triggered in two ways:
-- By appending '?' directly to a command: 'search?'
-- By adding a space before '?': 'search ?'
-
-In both cases, only the help is shown, and the command is not executed.
-
-Key functions:
-- show_help_overlay: Display a help overlay based on current input
-
-Example:
-    >>> from help_overlay import show_help_overlay
-    >>> show_help_overlay(current_input, help_context, console)
+Ending an input line with '?' ('search ?' or 'search?') shows help for what
+is being typed instead of running it: the list of commands, or the syntax,
+options, examples and recent values of the command.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from .help_context import COMMAND_PATTERNS, HelpContext
+from .help_context import COMMAND_PATTERNS, HelpContext, split_command
+
+CONNECT_OPTIONS = [
+    "--ssl: use an LDAPS connection",
+    "--starttls: upgrade the connection with STARTTLS before binding",
+    "--no-verify: skip certificate verification (insecure)",
+]
 
 
-def parse_partial_command(input_text: str) -> Dict[str, Any]:
-    """
-    Parse a partial command to understand what help to provide
+def _recent_arguments(help_context: HelpContext, command: str) -> List[str]:
+    """First arguments given to a command earlier in the session, newest first."""
+    seen: List[str] = []
+    for line in reversed(help_context.command_history):
+        parts = split_command(line)
+        if len(parts) > 1 and parts[0] == command and parts[1] not in seen:
+            seen.append(parts[1])
+    return seen[:3]
 
-    Args:
-        input_text: Current input text from the command line
 
-    Returns:
-        Dictionary with parsed command information
-    """
-    parts = input_text.strip().split()
-
-    result: Dict[str, Any] = {
-        "full_text": input_text,
-        "command": None,
-        "subcommand": None,
-        "args": [],
-        "current_arg_index": 0,
-        "current_arg_type": None,
-    }
+def get_help(input_text: str, help_context: HelpContext) -> Dict[str, Any]:
+    """Build the help for the partial command line ``input_text``."""
+    parts = input_text.split()
 
     if not parts:
-        return result
-
-    result["command"] = parts[0]
-
-    if len(parts) > 1:
-        result["args"] = parts[1:]
-        result["current_arg_index"] = len(parts) - 1
-
-    # Determine current argument type based on common LDAP patterns
-    if result["command"] in [
-        "search",
-        "info",
-        "add",
-        "modify",
-        "delete",
-        "rename",
-        "compare",
-        "schema",
-    ]:
-        if result["current_arg_index"] == 1:
-            result["current_arg_type"] = "host"
-        elif result["current_arg_index"] == 2:
-            result["current_arg_type"] = "base_dn"
-        elif result["current_arg_index"] == 3 and result["command"] == "search":
-            result["current_arg_type"] = "filter"
-
-    return result
-
-
-def get_help_for_position(
-    parsed_input: Dict[str, Any], help_context: HelpContext
-) -> Dict[str, Any]:
-    """
-    Get context-sensitive help based on the current input position
-
-    Args:
-        parsed_input: Parsed command information
-        help_context: HelpContext instance for context awareness
-
-    Returns:
-        Dictionary with context-sensitive help information
-    """
-    cmd = parsed_input["command"]
-
-    # If no command yet, show available commands
-    if cmd is None:
-        # Show command frequency to suggest most used commands first
-        frequent_commands = sorted(
-            help_context.command_frequency.items(), key=lambda x: x[1], reverse=True
-        )[:5]
-
-        suggestions = list(COMMAND_PATTERNS.keys())
+        frequent = sorted(
+            help_context.command_frequency.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
         return {
             "title": "Available Commands",
-            "help_text": "Type a command to begin, or use 'help' for more information.",
-            "suggestions": suggestions,
-            "frequent_commands": [cmd for cmd, count in frequent_commands if count > 0],
+            "help_text": "Type a command, or 'help' for the full list.",
+            "suggestions": list(COMMAND_PATTERNS),
+            "frequent_commands": [cmd for cmd, count in frequent[:5] if count > 0],
         }
 
-    # Get command help if available
+    cmd = parts[0]
     cmd_help = help_context.get_command_help(cmd)
-
-    # If unknown command, suggest corrections
     if "error" in cmd_help:
+        suggested = cmd_help.get("suggested_command")
         return {
             "title": "Unknown Command",
-            "help_text": cmd_help.get("error", "Unknown command"),
-            "suggestions": (
-                cmd_help.get("suggested_command", [])
-                if isinstance(cmd_help.get("suggested_command"), list)
-                else (
-                    [cmd_help.get("suggested_command")]
-                    if cmd_help.get("suggested_command")
-                    else []
-                )
-            ),
+            "help_text": cmd_help["error"],
+            "suggestions": [suggested] if suggested else [],
         }
 
-    # Get help based on argument position
-    args = parsed_input.get("args", [])
-    arg_type = parsed_input["current_arg_type"]
-
-    # For search command, add more context-specific help
-    if cmd == "search" and len(args) >= 1:
-        # Detect if we're at the host argument
-        if arg_type == "host":
-            # Check recent hosts from history
-            recent_hosts = set()
-            for cmd_str in help_context.command_history:
-                parts = cmd_str.split()
-                if len(parts) > 1 and parts[0] in [
-                    "search",
-                    "info",
-                    "add",
-                    "modify",
-                    "delete",
-                    "rename",
-                    "compare",
-                    "schema",
-                ]:
-                    recent_hosts.add(parts[1])
-
-            return {
-                "title": "LDAP Host",
-                "help_text": "Enter the LDAP server hostname or IP address.",
-                "examples": list(recent_hosts)[:3]
-                + ["ldap.example.com", "localhost", "192.168.1.100"],
-                "recent_usage": (
-                    f"You've recently used these hosts: {', '.join(list(recent_hosts)[:3])}"
-                    if recent_hosts
-                    else None
-                ),
-            }
-        # If we're at the base_dn argument and have previous searches
-        elif arg_type == "base_dn" and help_context.current_context.get("base_dn"):
-            recent_base_dns = set()
-            for cmd_str in help_context.command_history:
-                parts = cmd_str.split()
-                if len(parts) > 2 and parts[0] in [
-                    "search",
-                    "add",
-                    "modify",
-                    "delete",
-                    "rename",
-                    "compare",
-                ]:
-                    recent_base_dns.add(parts[2])
-
-            return {
-                "title": "Base DN",
-                "help_text": "Enter the base Distinguished Name (DN) for the operation.",
-                "examples": list(recent_base_dns)[:3]
-                + ["dc=example,dc=com", "ou=people,dc=example,dc=com"],
-                "recent_usage": (
-                    f"Recent base DNs: {', '.join(list(recent_base_dns)[:3])}"
-                    if recent_base_dns
-                    else None
-                ),
-                "tips": [
-                    "Enclose the DN in quotes if it contains spaces or special characters"
-                ],
-            }
-        # If we're at the filter argument
-        elif arg_type == "filter" and len(args) >= 2:
-            recent_filters = set()
-            for cmd_str in help_context.command_history:
-                parts = cmd_str.split()
-                if len(parts) > 3 and parts[0] == "search":
-                    recent_filters.add(parts[3])
-
-            return {
-                "title": "LDAP Filter",
-                "help_text": "Enter an LDAP search filter.\nFilters should be enclosed in parentheses.",
-                "examples": list(recent_filters)[:2]
-                + [
-                    "(objectClass=*)",
-                    "(cn=user*)",
-                    "(&(objectClass=person)(mail=*@example.com))",
-                ],
-                "tips": [
-                    "Use * as a wildcard: (cn=user*)",
-                    "Combine filters with & (AND) or | (OR): (&(objectClass=person)(cn=admin))",
-                    "Use ! for NOT: (!(objectClass=computer))",
-                ],
-            }
-
-    # Default basic position-based help
-    if arg_type == "host":
-        return {
-            "title": "LDAP Host",
-            "help_text": "Enter the LDAP server hostname or IP address.\nExample: ldap.example.com",
-            "examples": ["ldap.example.com", "localhost", "192.168.1.100"],
-        }
-    elif arg_type == "base_dn":
-        return {
-            "title": "Base DN",
-            "help_text": "Enter the base Distinguished Name (DN) for the operation.\nExample: dc=example,dc=com",
-            "examples": [
-                "dc=example,dc=com",
-                "ou=people,dc=example,dc=com",
-                "cn=admin,dc=example,dc=com",
-            ],
-        }
-    elif arg_type == "filter":
-        return {
-            "title": "LDAP Filter",
-            "help_text": "Enter an LDAP search filter.\nFilters should be enclosed in parentheses.",
-            "examples": [
-                "(objectClass=*)",
-                "(cn=user*)",
-                "(&(objectClass=person)(mail=*@example.com))",
-            ],
-        }
-
-    # General help for the command with additional context-specific information
-    help_info = {
+    help_info: Dict[str, Any] = {
         "title": f"Help for '{cmd}'",
-        "help_text": f"Syntax: {cmd_help.get('syntax', '')}",
+        "help_text": f"Syntax: {cmd_help['syntax']}",
         "examples": cmd_help.get("examples", []),
         "tips": cmd_help.get("common_errors", []),
     }
 
-    # Add command-specific additional help
-    if cmd == "search":
-        help_info["options"] = [
-            "--tree: Display results in a hierarchical tree",
-            "--json: Output results in JSON format",
-            "--ldif: Output results in LDIF format",
-            "-a <attr>: Specify attributes to fetch (can be used multiple times)",
-        ]
-    elif cmd == "modify":
-        help_info["options"] = [
-            "--add <attr>=<value>: Add a value to an attribute",
-            "--replace <attr>=<value>: Replace an attribute value",
-            "--delete <attr>: Delete an entire attribute",
-            "--delete <attr>=<value>: Delete a specific attribute value",
-        ]
+    if cmd == "connect":
+        help_info["options"] = CONNECT_OPTIONS
+        recent = _recent_arguments(help_context, "connect")
+        if recent:
+            help_info["recent_usage"] = f"Recent hosts: {', '.join(recent)}"
+    elif cmd == "base":
+        recent = _recent_arguments(help_context, "base")
+        if recent:
+            help_info["recent_usage"] = f"Recent base DNs: {', '.join(recent)}"
+    elif cmd == "search":
+        base_dn = help_context.current_context.get("base_dn")
+        recent = _recent_arguments(help_context, "search")
+        notes = [f"Base DN: {base_dn}"] if base_dn else ["Base DN not set"]
+        if recent:
+            notes.append(f"Recent filters: {', '.join(recent)}")
+        help_info["recent_usage"] = ". ".join(notes)
+        if len(parts) > 1:
+            help_info["help_text"] += "\nWords after the filter are attribute names."
 
     return help_info
 
 
 def show_help_overlay(
-    input_text: str,
-    help_context: HelpContext,
-    console: Console,
-    non_interactive: bool = False,
+    input_text: str, help_context: HelpContext, console: Console
 ) -> None:
-    """
-    Display a help overlay based on the current input
+    """Print the help panel for the partial command line ``input_text``."""
+    help_info = get_help(input_text, help_context)
 
-    Args:
-        input_text: Current input text from the command line
-        help_context: HelpContext instance for context awareness
-        console: Rich console for output
-        non_interactive: If True, don't wait for user input
-    """
-    # Parse the current input
-    parsed_input = parse_partial_command(input_text)
+    table = Table(box=None, show_header=False, expand=True)
+    table.add_column("Content", style="bright_white")
 
-    # Get context-sensitive help
-    help_info = get_help_for_position(parsed_input, help_context)
+    table.add_row(f"[bold cyan]{escape(help_info['title'])}[/bold cyan]")
+    table.add_row("")
+    table.add_row(escape(help_info["help_text"]))
+    table.add_row("")
 
-    # Create help panel
-    help_table = Table(box=None, show_header=False, expand=True)
-    help_table.add_column("Content", style="bright_white")
+    if help_info.get("recent_usage"):
+        table.add_row(
+            f"[bold magenta]{escape(help_info['recent_usage'])}[/bold magenta]"
+        )
+        table.add_row("")
 
-    # Add title
-    help_table.add_row(f"[bold cyan]{help_info['title']}[/bold cyan]")
-    help_table.add_row("")
+    sections = [
+        ("Frequently Used Commands:", "frequent_commands", "command", ""),
+        ("Options:", "options", "option", ""),
+        ("Tips & Common Issues:", "tips", "info", "• "),
+        ("Examples:", "examples", "command", ""),
+        ("Suggestions:", "suggestions", "success", "• "),
+    ]
+    for heading, key, style, bullet in sections:
+        items = help_info.get(key)
+        if not items:
+            continue
+        table.add_row(f"[bold]{heading}[/bold]")
+        for item in items:
+            table.add_row(f"  [{style}]{bullet}{escape(item)}[/{style}]")
+        table.add_row("")
 
-    # Add help text
-    if "help_text" in help_info:
-        help_table.add_row(help_info["help_text"])
-        help_table.add_row("")
-
-    # Add recent usage if available (specific context)
-    if "recent_usage" in help_info and help_info["recent_usage"]:
-        help_table.add_row(f"[bold magenta]{help_info['recent_usage']}[/bold magenta]")
-        help_table.add_row("")
-
-    # Add frequently used commands if available
-    if "frequent_commands" in help_info and help_info["frequent_commands"]:
-        help_table.add_row("[bold]Frequently Used Commands:[/bold]")
-        for cmd in help_info["frequent_commands"]:
-            help_table.add_row(f"  [command]{cmd}[/command]")
-        help_table.add_row("")
-
-    # Add options if available
-    if "options" in help_info and help_info["options"]:
-        help_table.add_row("[bold]Useful Options:[/bold]")
-        for option in help_info["options"]:
-            help_table.add_row(f"  [option]{option}[/option]")
-        help_table.add_row("")
-
-    # Add tips if available
-    if "tips" in help_info and help_info["tips"]:
-        help_table.add_row("[bold]Tips & Common Issues:[/bold]")
-        for tip in help_info["tips"]:
-            help_table.add_row(f"  [info]• {tip}[/info]")
-        help_table.add_row("")
-
-    # Add examples if available
-    if "examples" in help_info and help_info["examples"]:
-        help_table.add_row("[bold]Examples:[/bold]")
-        for example in help_info["examples"]:
-            help_table.add_row(f"  [command]{example}[/command]")
-        help_table.add_row("")
-
-    # Add suggestions if available
-    if "suggestions" in help_info and help_info["suggestions"]:
-        help_table.add_row("[bold]Suggestions:[/bold]")
-        for suggestion in help_info["suggestions"]:
-            help_table.add_row(f"  [success]• {suggestion}[/success]")
-
-    # Create and display the panel
-    panel = Panel(
-        help_table, title="[bold]Context Help[/bold]", border_style="bright_blue"
+    console.print(
+        Panel(table, title="[bold]Context Help[/bold]", border_style="bright_blue")
     )
-
-    # Don't clear screen in non-interactive mode
-    if not non_interactive:
-        console.clear()
-    console.print(panel)
-    console.print(f"\nCurrent input: [command]{input_text}[/command]")
+    console.print(f"\nCurrent input: [command]{escape(input_text)}[/command]")
