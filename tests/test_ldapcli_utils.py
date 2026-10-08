@@ -7,28 +7,29 @@ Unit tests for LDAPie utility functions
 import os
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
-import json
-import ldap3
 from io import StringIO
+from unittest.mock import MagicMock, patch
+
+import ldap3
 
 # Add the parent directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Import the utility functions to test
-from ldapie.utils import (
-    validate_search_filter,
-    validate_dn,
-    parse_attributes,
-    safe_get_password,
-    handle_error_response,
-    parse_modification_attributes,
-    format_output_filename,
-)
 from ldapie.entry_operations import (
     add_entry,
     delete_entry,
     modify_entry,
+)
+
+# Import the utility functions to test
+from ldapie.utils import (
+    format_output_filename,
+    handle_error_response,
+    parse_attributes,
+    parse_modification_attributes,
+    safe_get_password,
+    validate_dn,
+    validate_search_filter,
 )
 
 
@@ -42,7 +43,7 @@ class TestLdapUtils(unittest.TestCase):
         sys.stdout = self.stdout
         # Common mock connection for tests that need it
         self.mock_conn = MagicMock(spec=ldap3.Connection)
-        self.mock_conn.result = {'description': 'mocked error', 'result': 1}
+        self.mock_conn.result = {"description": "mocked error", "result": 1}
 
     def tearDown(self):
         """Tear down test fixtures"""
@@ -98,7 +99,9 @@ class TestLdapUtils(unittest.TestCase):
         self.assertTrue(validate_search_filter("(cn>=A)"))
         self.assertTrue(validate_search_filter("(cn<=Z)"))
         self.assertTrue(validate_search_filter("(cn~=user)"))
-        self.assertTrue(validate_search_filter("(&(objectClass=person)(|(cn=user)(mail=user@*)))"))
+        self.assertTrue(
+            validate_search_filter("(&(objectClass=person)(|(cn=user)(mail=user@*)))")
+        )
 
     def test_validate_search_filter_invalid(self):
         """Test validation of invalid LDAP search filters"""
@@ -141,7 +144,9 @@ class TestLdapUtils(unittest.TestCase):
 
     def test_safe_get_password(self):
         """Test secure password retrieval"""
-        with patch('getpass.getpass', return_value="prompted_secret") as mock_getpass_direct:
+        with patch(
+            "getpass.getpass", return_value="prompted_secret"
+        ) as mock_getpass_direct:
             password = safe_get_password("Enter test password: ")
             mock_getpass_direct.assert_called_once_with("Enter test password: ")
             self.assertEqual(password, "prompted_secret")
@@ -149,26 +154,45 @@ class TestLdapUtils(unittest.TestCase):
     def test_add_entry(self):
         """Test adding a new LDAP entry"""
         self.mock_conn.add.return_value = True
-        attributes_with_oc = {"objectClass": ["person"], "cn": ["testuser"], "sn": ["User"]}
+        attributes_with_oc = {
+            "objectClass": ["person"],
+            "cn": ["testuser"],
+            "sn": ["User"],
+        }
 
-        result = add_entry(self.mock_conn, "cn=testuser,dc=example,dc=com", attributes_with_oc)
+        result = add_entry(
+            self.mock_conn, "cn=testuser,dc=example,dc=com", attributes_with_oc
+        )
         self.assertTrue(result)
-        self.mock_conn.add.assert_called_with("cn=testuser,dc=example,dc=com",
-                                  ["person"],
-                                  {"cn": ["testuser"], "sn": ["User"]},
-                                  controls=None)
+        self.mock_conn.add.assert_called_with(
+            "cn=testuser,dc=example,dc=com",
+            ["person"],
+            {"cn": ["testuser"], "sn": ["User"]},
+            controls=None,
+        )
 
         self.mock_conn.add.return_value = False
-        with self.assertRaisesRegex(RuntimeError, "LDAP Add operation failed for cn=testuser,dc=example,dc=com: mocked error"):
-            add_entry(self.mock_conn, "cn=testuser,dc=example,dc=com", {"objectClass": ["person"], "cn": ["entryAlreadyExists"]})
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "LDAP Add operation failed for cn=testuser,dc=example,dc=com: mocked error",
+        ):
+            add_entry(
+                self.mock_conn,
+                "cn=testuser,dc=example,dc=com",
+                {"objectClass": ["person"], "cn": ["entryAlreadyExists"]},
+            )
 
     def test_delete_entry(self):
         """Test deleting an LDAP entry"""
         self.mock_conn.delete.return_value = True
         # Test non-recursive delete first
-        result_non_recursive = delete_entry(self.mock_conn, "cn=testuser,dc=example,dc=com")
+        result_non_recursive = delete_entry(
+            self.mock_conn, "cn=testuser,dc=example,dc=com"
+        )
         self.assertTrue(result_non_recursive)
-        self.mock_conn.delete.assert_called_once_with("cn=testuser,dc=example,dc=com", controls=None)
+        self.mock_conn.delete.assert_called_once_with(
+            "cn=testuser,dc=example,dc=com", controls=None
+        )
 
         # Test recursive delete (optimized: single SUBTREE search)
         self.mock_conn.reset_mock()
@@ -195,7 +219,7 @@ class TestLdapUtils(unittest.TestCase):
         # Should be a single SUBTREE search
         self.mock_conn.search.assert_called_once_with(
             search_base=parent_dn,
-            search_filter='(objectClass=*)',
+            search_filter="(objectClass=*)",
             search_scope=ldap3.SUBTREE,
             attributes=[],
             controls=None,
@@ -210,17 +234,28 @@ class TestLdapUtils(unittest.TestCase):
         """Test modifying an LDAP entry"""
         self.mock_conn.modify.return_value = True
         ldap3_formatted_mods = {
-            'mail': [(ldap3.MODIFY_REPLACE, ['new@example.com'])],
-            'title': [(ldap3.MODIFY_ADD, ['Manager'])]
+            "mail": [(ldap3.MODIFY_REPLACE, ["new@example.com"])],
+            "title": [(ldap3.MODIFY_ADD, ["Manager"])],
         }
 
-        result = modify_entry(self.mock_conn, "cn=testuser,dc=example,dc=com", ldap3_formatted_mods)
+        result = modify_entry(
+            self.mock_conn, "cn=testuser,dc=example,dc=com", ldap3_formatted_mods
+        )
         self.assertTrue(result)
-        self.mock_conn.modify.assert_called_with("cn=testuser,dc=example,dc=com", ldap3_formatted_mods, controls=None)
+        self.mock_conn.modify.assert_called_with(
+            "cn=testuser,dc=example,dc=com", ldap3_formatted_mods, controls=None
+        )
 
         self.mock_conn.modify.return_value = False
-        with self.assertRaisesRegex(RuntimeError, "LDAP Modify operation failed for cn=testuser,dc=example,dc=com: mocked error"):
-            modify_entry(self.mock_conn, "cn=testuser,dc=example,dc=com", {'mail': [(ldap3.MODIFY_REPLACE, ['noSuchAttribute'])]})
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "LDAP Modify operation failed for cn=testuser,dc=example,dc=com: mocked error",
+        ):
+            modify_entry(
+                self.mock_conn,
+                "cn=testuser,dc=example,dc=com",
+                {"mail": [(ldap3.MODIFY_REPLACE, ["noSuchAttribute"])]},
+            )
 
 
 if __name__ == "__main__":

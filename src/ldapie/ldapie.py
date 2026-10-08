@@ -26,20 +26,31 @@ Usage:
     ldapie interactive [options]
 """
 
+import getpass
+import json as json_lib  # Renamed to avoid conflicts with parameter names
 import os
 import ssl
 import sys
-from . import __version__
-import click
-import getpass
-import json as json_lib  # Renamed to avoid conflicts with parameter names
-from typing import Optional, Tuple, Dict, Any
 import traceback  # For debug stack traces
+from typing import Optional, Tuple
+
+import click
+from ldap3 import (
+    ALL,
+    ALL_ATTRIBUTES,
+    BASE,
+    LEVEL,
+    SUBTREE,
+    Connection,
+    Server,
+    Tls,
+)
+from ldap3.core.exceptions import LDAPBindError, LDAPException
 from rich.console import Console
-from rich.theme import Theme
 from rich.table import Table
-from ldap3 import Server, Connection, Tls, ALL, ALL_ATTRIBUTES, SUBTREE, BASE, LEVEL, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE
-from ldap3.core.exceptions import LDAPException, LDAPBindError
+from rich.theme import Theme
+
+from . import __version__
 
 # Define color themes before importing other modules to avoid circular imports
 DARK_THEME = {
@@ -78,41 +89,42 @@ console = Console(theme=Theme(theme_colors))
 # Now import modules that might need the console
 try:
     # Try importing as an installed package
-    from ldapie import search as search_utils
-    from ldapie import output as output_utils
-    from ldapie import schema as schema_utils
     from ldapie import entry_operations as entry_utils
     from ldapie import interactive as interactive_utils
+    from ldapie import output as output_utils
+    from ldapie import schema as schema_utils
+    from ldapie import search as search_utils
     from ldapie import utils as general_utils
     from ldapie.rich_formatter import add_rich_help_option
 except ImportError:
     # Fall back to development path
     try:
         # Try relative imports first (when running as part of a package)
-        from . import search as search_utils
-        from . import output as output_utils
-        from . import schema as schema_utils
         from . import entry_operations as entry_utils
         from . import interactive as interactive_utils
+        from . import output as output_utils
+        from . import schema as schema_utils
+        from . import search as search_utils
         from . import utils as general_utils
         from .rich_formatter import add_rich_help_option
     except (ImportError, ValueError):
         # Final fallback to fully qualified imports
-        from src.ldapie import search as search_utils
+        from src.ldapie import entry_operations as entry_utils
+        from src.ldapie import interactive as interactive_utils
         from src.ldapie import output as output_utils
         from src.ldapie import schema as schema_utils
-        from src.ldapie import entry_operations as entry_utils
-        from src.ldapie import interactive as interactive_utils  
+        from src.ldapie import search as search_utils
         from src.ldapie import utils as general_utils
         from src.ldapie.rich_formatter import add_rich_help_option
+
 
 class LdapConfig:
     """
     LDAP Connection Configuration
-    
+
     Stores configuration details for an LDAP connection and provides
     methods to establish connections.
-    
+
     Attributes:
         host (str): LDAP server hostname
         username (Optional[str]): Bind DN for authentication
@@ -121,6 +133,7 @@ class LdapConfig:
         port (int): LDAP port number
         timeout (int): Connection timeout in seconds
     """
+
     def __init__(
         self,
         host: str,
@@ -157,20 +170,20 @@ class LdapConfig:
     def get_connection(self) -> Tuple[Server, Connection]:
         """
         Create an LDAP server connection based on configuration.
-        
+
         Establishes a connection to the LDAP server using the configured
         parameters. If username is provided but password is not, prompts
         for password interactively.
-        
+
         Returns:
             Tuple containing:
                 - Server object
                 - Connection object (bound to the server)
-                
+
         Raises:
             LDAPBindError: If authentication fails
             LDAPException: For other LDAP-related errors
-            
+
         Example:
             >>> server, conn = config.get_connection()
         """
@@ -179,36 +192,38 @@ class LdapConfig:
         if self.use_ssl or self.starttls:
             validate = ssl.CERT_NONE if self.no_verify else ssl.CERT_REQUIRED
             if self.no_verify:
-                console.print("[warning]Warning: TLS certificate verification is disabled.[/warning]")
+                console.print(
+                    "[warning]Warning: TLS certificate verification is disabled.[/warning]"
+                )
             tls_config = Tls(validate=validate)
 
         server_uri = f"{'ldaps' if self.use_ssl else 'ldap'}://{self.host}:{self.port}"
-        server = Server(server_uri, get_info=ALL, connect_timeout=self.timeout, tls=tls_config)
+        server = Server(
+            server_uri, get_info=ALL, connect_timeout=self.timeout, tls=tls_config
+        )
 
         # Handle anonymous vs. authenticated binding
         if self.username:
             if self.password is None:
                 # Try LDAP_PASSWORD env var before prompting
-                env_password = os.environ.get('LDAP_PASSWORD')
+                env_password = os.environ.get("LDAP_PASSWORD")
                 if env_password:
                     self.password = env_password
                 else:
-                    self.password = getpass.getpass(f"Enter password for {self.username}: ")
-            
+                    self.password = getpass.getpass(
+                        f"Enter password for {self.username}: "
+                    )
+
             conn = Connection(
                 server,
                 user=self.username,
                 password=self.password,
                 auto_bind=True,
-                raise_exceptions=True
+                raise_exceptions=True,
             )
         else:
             # Anonymous binding
-            conn = Connection(
-                server,
-                auto_bind=True,
-                raise_exceptions=True
-            )
+            conn = Connection(server, auto_bind=True, raise_exceptions=True)
 
         # Upgrade to TLS via STARTTLS if requested (and not already using LDAPS)
         if self.starttls and not self.use_ssl:
@@ -253,8 +268,8 @@ def handle_connection_error(func):
     def wrapper(*args, **kwargs):
         ctx = click.get_current_context(silent=True)
         is_debug = False
-        if ctx and hasattr(ctx, 'obj') and isinstance(ctx.obj, dict):
-            is_debug = ctx.obj.get('DEBUG', False)
+        if ctx and hasattr(ctx, "obj") and isinstance(ctx.obj, dict):
+            is_debug = ctx.obj.get("DEBUG", False)
 
         command_str = func.__name__.replace("_command", "")
 
@@ -267,21 +282,37 @@ def handle_connection_error(func):
             help_context = HelpContext()
         except ImportError:
             if is_debug:
-                console.print("[bold yellow]DEBUG[/bold yellow]: Could not import HelpContext.")
+                console.print(
+                    "[bold yellow]DEBUG[/bold yellow]: Could not import HelpContext."
+                )
 
         try:
             if is_debug:
-                console.print(f"[bold blue]DEBUG[/bold blue]: Executing {func.__name__}")
+                console.print(
+                    f"[bold blue]DEBUG[/bold blue]: Executing {func.__name__}"
+                )
                 console.print(f"[bold blue]DEBUG[/bold blue]: Arguments: {args}")
-                console.print(f"[bold blue]DEBUG[/bold blue]: Keyword arguments: {kwargs}")
+                console.print(
+                    f"[bold blue]DEBUG[/bold blue]: Keyword arguments: {kwargs}"
+                )
 
             result = func(*args, **kwargs)
 
             if is_debug:
-                console.print(f"[bold blue]DEBUG[/bold blue]: {func.__name__} completed successfully")
+                console.print(
+                    f"[bold blue]DEBUG[/bold blue]: {func.__name__} completed successfully"
+                )
             return result
 
-        except (LDAPBindError, LDAPException, ValueError, TypeError, KeyError, OSError, IOError) as e:
+        except (
+            LDAPBindError,
+            LDAPException,
+            ValueError,
+            TypeError,
+            KeyError,
+            OSError,
+            IOError,
+        ) as e:
             error_msg = _format_error(e, _ERROR_MESSAGES)
             console.print(f"[error]{error_msg}[/error]")
             if is_debug:
@@ -303,27 +334,41 @@ def handle_connection_error(func):
 
     return wrapper
 
+
 @click.group(name="ldapie")
 @click.version_option(version=__version__)
-@click.option('--install-completion', is_flag=True, help='Install completion for the current shell.')
-@click.option('--show-completion', is_flag=True, help='Show completion for the current shell, to copy it or customize the installation.')
-@click.option('--demo', is_flag=True, help='Run the automated demo with mock LDAP server.')
-@click.option('--debug', is_flag=True, help='Enable debug mode for detailed error output.')
+@click.option(
+    "--install-completion",
+    is_flag=True,
+    help="Install completion for the current shell.",
+)
+@click.option(
+    "--show-completion",
+    is_flag=True,
+    help="Show completion for the current shell, to copy it or customize the installation.",
+)
+@click.option(
+    "--demo", is_flag=True, help="Run the automated demo with mock LDAP server."
+)
+@click.option(
+    "--debug", is_flag=True, help="Enable debug mode for detailed error output."
+)
 @add_rich_help_option
 @click.pass_context
 def cli(ctx, install_completion=False, show_completion=False, demo=False, debug=False):
     """LDAPie - A modern LDAP client"""
     # Set up the context object
     ctx.ensure_object(dict)
-    ctx.obj['DEBUG'] = debug
-    ctx.obj['DEMO'] = demo
+    ctx.obj["DEBUG"] = debug
+    ctx.obj["DEMO"] = demo
 
     # Load config file defaults
     try:
         from .config import load_config
-        ctx.obj['config'] = load_config()
+
+        ctx.obj["config"] = load_config()
     except ImportError:
-        ctx.obj['config'] = {}
+        ctx.obj["config"] = {}
 
     if debug:
         console.print("[bold red]Debug mode enabled.[/bold red]")
@@ -334,120 +379,145 @@ def cli(ctx, install_completion=False, show_completion=False, demo=False, debug=
         except ImportError:
             from src.ldapie.help_context import HelpContext
         # Initialize the help context as a singleton
-        help_context = HelpContext()
+        HelpContext()
     except ImportError:
         pass
-    
+
     # Check for demo flag first
     if demo:
         console.print("[info]Starting the automated LDAPie demo...[/info]")
         # We'll handle this in the main block
         return
-        
+
     # Install shell completion if requested
     if install_completion or show_completion:
-        import subprocess
-        
         # Determine the shell
-        shell = os.environ.get('SHELL', '').split('/')[-1]
+        shell = os.environ.get("SHELL", "").split("/")[-1]
         if not shell:
             console.print("[error]Unable to determine your shell type.[/error]")
             sys.exit(1)
-            
-        if shell not in ['bash', 'zsh', 'fish']:
-            console.print(f"[error]Unsupported shell: {shell}. Supported shells are: bash, zsh, fish[/error]")
+
+        if shell not in ["bash", "zsh", "fish"]:
+            console.print(
+                f"[error]Unsupported shell: {shell}. Supported shells are: bash, zsh, fish[/error]"
+            )
             sys.exit(1)
-            
+
         # Generate completion script
         completion_script = f"""
 # LDAPie shell completion
 eval "$(_LDAPIE_COMPLETE={shell}_source ldapie)"
 """
-        
+
         if show_completion:
             console.print(f"# LDAPie completion for {shell}")
             console.print(completion_script)
             sys.exit(0)
-            
+
         if install_completion:
             # Determine file locations and instructions
             shell_info = {
-                'bash': {
-                    'rcfile': os.path.expanduser('~/.bashrc'),
-                    'completions_dir': os.path.expanduser('~/.bash_completion.d'),
-                    'completion_file': os.path.expanduser('~/.bash_completion.d/ldapie'),
-                    'manual_install': "source ~/.bash_completion.d/ldapie"
+                "bash": {
+                    "rcfile": os.path.expanduser("~/.bashrc"),
+                    "completions_dir": os.path.expanduser("~/.bash_completion.d"),
+                    "completion_file": os.path.expanduser(
+                        "~/.bash_completion.d/ldapie"
+                    ),
+                    "manual_install": "source ~/.bash_completion.d/ldapie",
                 },
-                'zsh': {
-                    'rcfile': os.path.expanduser('~/.zshrc'),
-                    'completions_dir': os.path.expanduser('~/.zsh/completion'),
-                    'completion_file': os.path.expanduser('~/.zsh/completion/_ldapie'),
-                    'manual_install': "fpath=(~/.zsh/completion $fpath)\nautoload -Uz compinit && compinit"
-                }, 
-                'fish': {
-                    'rcfile': os.path.expanduser('~/.config/fish/config.fish'),
-                    'completions_dir': os.path.expanduser('~/.config/fish/completions'),
-                    'completion_file': os.path.expanduser('~/.config/fish/completions/ldapie.fish'),
-                    'manual_install': "# No additional steps needed for fish"
-                }
+                "zsh": {
+                    "rcfile": os.path.expanduser("~/.zshrc"),
+                    "completions_dir": os.path.expanduser("~/.zsh/completion"),
+                    "completion_file": os.path.expanduser("~/.zsh/completion/_ldapie"),
+                    "manual_install": "fpath=(~/.zsh/completion $fpath)\nautoload -Uz compinit && compinit",
+                },
+                "fish": {
+                    "rcfile": os.path.expanduser("~/.config/fish/config.fish"),
+                    "completions_dir": os.path.expanduser("~/.config/fish/completions"),
+                    "completion_file": os.path.expanduser(
+                        "~/.config/fish/completions/ldapie.fish"
+                    ),
+                    "manual_install": "# No additional steps needed for fish",
+                },
             }
-            
+
             info = shell_info[shell]
-            
+
             # Create completions directory if it doesn't exist
-            os.makedirs(info['completions_dir'], exist_ok=True)
-            
+            os.makedirs(info["completions_dir"], exist_ok=True)
+
             # Write the completion script to the file
             try:
                 # Use the corresponding completion file from the package
                 script_dir = os.path.dirname(os.path.abspath(__file__))
                 package_dir = os.path.dirname(script_dir)
-                
+
                 # Try to find the completion file in various locations
                 completion_paths = [
                     os.path.join(script_dir, f"../completion.{shell}"),  # From source
-                    os.path.join(package_dir, f"completion.{shell}"),     # From package
-                    os.path.join(os.path.dirname(package_dir), f"completion.{shell}")  # From parent dir
+                    os.path.join(package_dir, f"completion.{shell}"),  # From package
+                    os.path.join(
+                        os.path.dirname(package_dir), f"completion.{shell}"
+                    ),  # From parent dir
                 ]
-                
+
                 found = False
                 for path in completion_paths:
                     if os.path.exists(path):
-                        with open(path, 'r', encoding='utf-8') as src, open(info['completion_file'], 'w', encoding='utf-8') as dest:
+                        with (
+                            open(path, "r", encoding="utf-8") as src,
+                            open(
+                                info["completion_file"], "w", encoding="utf-8"
+                            ) as dest,
+                        ):
                             dest.write(src.read())
                         found = True
                         break
-                
+
                 if not found:
                     # Fall back to the basic completion script if we can't find the file
-                    with open(info['completion_file'], 'w', encoding='utf-8') as f:
+                    with open(info["completion_file"], "w", encoding="utf-8") as f:
                         f.write(completion_script)
-                
-                console.print(f"[success]Completion for {shell} has been installed to {info['completion_file']}[/success]")
-                
+
+                console.print(
+                    f"[success]Completion for {shell} has been installed to {info['completion_file']}[/success]"
+                )
+
                 # Add to rcfile if this is bash or zsh
-                if shell in ['bash', 'zsh']:
+                if shell in ["bash", "zsh"]:
                     try:
-                        with open(info['rcfile'], 'r', encoding='utf-8') as f:
+                        with open(info["rcfile"], "r", encoding="utf-8") as f:
                             content = f.read()
-                            
-                        if shell == 'bash' and 'bash_completion.d/ldapie' not in content:
-                            with open(info['rcfile'], 'a', encoding='utf-8') as f:
-                                f.write(f"\n# LDAPie completion\n{info['manual_install']}\n")
-                                
-                        elif shell == 'zsh' and '~/.zsh/completion' not in content:
-                            with open(info['rcfile'], 'a', encoding='utf-8') as f:
-                                f.write(f"\n# LDAPie completion\n{info['manual_install']}\n")
+
+                        if (
+                            shell == "bash"
+                            and "bash_completion.d/ldapie" not in content
+                        ):
+                            with open(info["rcfile"], "a", encoding="utf-8") as f:
+                                f.write(
+                                    f"\n# LDAPie completion\n{info['manual_install']}\n"
+                                )
+
+                        elif shell == "zsh" and "~/.zsh/completion" not in content:
+                            with open(info["rcfile"], "a", encoding="utf-8") as f:
+                                f.write(
+                                    f"\n# LDAPie completion\n{info['manual_install']}\n"
+                                )
                     except FileNotFoundError:
                         # Create the file if it doesn't exist
-                        with open(info['rcfile'], 'w', encoding='utf-8') as f:
-                            f.write(f"\n# LDAPie completion\n{info['manual_install']}\n")
-                
-                console.print("[info]Please restart your shell or source the config file to enable completions.[/info]")
+                        with open(info["rcfile"], "w", encoding="utf-8") as f:
+                            f.write(
+                                f"\n# LDAPie completion\n{info['manual_install']}\n"
+                            )
+
+                console.print(
+                    "[info]Please restart your shell or source the config file to enable completions.[/info]"
+                )
                 sys.exit(0)
             except Exception as e:
                 console.print(f"[error]Failed to install completion: {str(e)}[/error]")
                 sys.exit(1)
+
 
 @cli.command("search")
 @click.argument("host")
@@ -456,11 +526,25 @@ eval "$(_LDAPIE_COMPLETE={shell}_source ldapie)"
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
-@click.option("-a", "--attrs", multiple=True, help="Attributes to fetch (can be used multiple times)")
-@click.option("--scope", type=click.Choice(["base", "one", "sub"]), default="sub", help="Search scope")
+@click.option(
+    "-a",
+    "--attrs",
+    multiple=True,
+    help="Attributes to fetch (can be used multiple times)",
+)
+@click.option(
+    "--scope",
+    type=click.Choice(["base", "one", "sub"]),
+    default="sub",
+    help="Search scope",
+)
 @click.option("--limit", type=int, help="Maximum number of entries to return")
 @click.option("--page-size", type=int, help="Page size for paged results")
 @click.option("--json", "json_output", is_flag=True, help="Output in JSON format")
@@ -472,17 +556,33 @@ eval "$(_LDAPIE_COMPLETE={shell}_source ldapie)"
 @add_rich_help_option
 @handle_connection_error
 def search_command(
-    host, base_dn, filter_query, username, password, ssl, starttls, no_verify,
-    port, attrs, scope, limit, page_size, json_output, ldif, csv, tree,
-    output_file, theme
+    host,
+    base_dn,
+    filter_query,
+    username,
+    password,
+    ssl,
+    starttls,
+    no_verify,
+    port,
+    attrs,
+    scope,
+    limit,
+    page_size,
+    json_output,
+    ldif,
+    csv,
+    tree,
+    output_file,
+    theme,
 ):
     """
     Search the LDAP directory.
-    
+
     Note: The theme parameter is not used in this function but is kept for API consistency.
-    
+
     Performs an LDAP search operation and displays the results in various formats.
-    
+
     Args:
         host: LDAP server hostname
         base_dn: Base DN for search
@@ -501,7 +601,7 @@ def search_command(
         tree: Display results as a tree
         output: Save results to a file
         theme: Color theme
-        
+
     Example:
         ldapie search ldap.example.com dc=example,dc=com "(objectClass=person)" \\
                 --attrs cn --attrs mail --limit 100
@@ -516,7 +616,7 @@ def search_command(
         starttls=starttls,
         no_verify=no_verify,
     )
-    
+
     _warn_if_password_on_cli(password)
 
     # Validate search filter
@@ -530,41 +630,35 @@ def search_command(
     server, conn = config.get_connection()
 
     # Determine search scope
-    search_scope = {
-        "base": BASE,
-        "one": LEVEL,
-        "sub": SUBTREE
-    }[scope]
-    
+    search_scope = {"base": BASE, "one": LEVEL, "sub": SUBTREE}[scope]
+
     # Attributes to retrieve
     attributes = list(attrs) if attrs else ALL_ATTRIBUTES
-    
+
     # Execute search
     console.print(f"[info]Searching {host} with filter: {filter_query}[/info]")
-    
+
     if page_size:
         # Use paged search
         entries = search_utils.paged_search(
-            conn, base_dn, filter_query, 
-            search_scope, attributes, 
-            page_size, limit
+            conn, base_dn, filter_query, search_scope, attributes, page_size, limit
         )
     else:
         # Regular search
         conn.search(
-            base_dn, 
-            filter_query, 
-            search_scope=search_scope, 
+            base_dn,
+            filter_query,
+            search_scope=search_scope,
             attributes=attributes,
-            size_limit=limit or 0
+            size_limit=limit or 0,
         )
         entries = conn.entries
-    
+
     # Process and display results
     if len(entries) == 0:
         console.print("[warning]No entries found.[/warning]")
         return
-    
+
     # Update help context with search results if available
     try:
         try:
@@ -577,9 +671,9 @@ def search_command(
         help_context.current_context["attributes"] = attributes
     except ImportError:
         pass
-    
+
     console.print(f"[success]Found {len(entries)} entries.[/success]")
-    
+
     # Handle different output formats
     if json_output:
         output_utils.output_json(entries, output_file)
@@ -593,13 +687,18 @@ def search_command(
         # Default rich text output
         output_utils.output_rich(entries, console, output_file)
 
+
 @cli.command("info")
 @click.argument("host")
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--json", "json_output", is_flag=True, help="Output in JSON format")
 @add_rich_help_option
@@ -618,15 +717,16 @@ def info_command(host, username, password, ssl, starttls, no_verify, port, json_
         starttls=starttls,
         no_verify=no_verify,
     )
-    
+
     # Connect to LDAP server
     server, conn = config.get_connection()
-    
+
     # Get server info
     if json_output:
         schema_utils.output_server_info_json(server, console)
     else:
         schema_utils.output_server_info_rich(server, console)
+
 
 @cli.command("compare")
 @click.argument("host")
@@ -635,13 +735,24 @@ def info_command(host, username, password, ssl, starttls, no_verify, port, json_
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
-@click.option("-a", "--attrs", multiple=True, help="Attributes to compare (can be used multiple times)")
+@click.option(
+    "-a",
+    "--attrs",
+    multiple=True,
+    help="Attributes to compare (can be used multiple times)",
+)
 @add_rich_help_option
 @handle_connection_error
-def compare_command(host, dn1, dn2, username, password, ssl, starttls, no_verify, port, attrs):
+def compare_command(
+    host, dn1, dn2, username, password, ssl, starttls, no_verify, port, attrs
+):
     """Compare two LDAP entries"""
     _warn_if_password_on_cli(password)
 
@@ -663,12 +774,13 @@ def compare_command(host, dn1, dn2, username, password, ssl, starttls, no_verify
         starttls=starttls,
         no_verify=no_verify,
     )
-    
+
     # Connect to LDAP server
     server, conn = config.get_connection()
-    
+
     # Perform comparison
     search_utils.compare_entries(conn, dn1, dn2, attrs, console)
+
 
 @cli.command("schema")
 @click.argument("host")
@@ -676,13 +788,19 @@ def compare_command(host, dn1, dn2, username, password, ssl, starttls, no_verify
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--attr", help="Display information about specific attribute")
 @add_rich_help_option
 @handle_connection_error
-def schema_command(host, object_class, username, password, ssl, starttls, no_verify, port, attr):
+def schema_command(
+    host, object_class, username, password, ssl, starttls, no_verify, port, attr
+):
     """Get schema information from LDAP server"""
     _warn_if_password_on_cli(password)
 
@@ -696,12 +814,13 @@ def schema_command(host, object_class, username, password, ssl, starttls, no_ver
         starttls=starttls,
         no_verify=no_verify,
     )
-    
+
     # Connect to LDAP server
     server, conn = config.get_connection()
-    
+
     # Get and display schema information
     schema_utils.show_schema(server, object_class, attr, console)
+
 
 @cli.command("add")
 @click.argument("host")
@@ -709,16 +828,37 @@ def schema_command(host, object_class, username, password, ssl, starttls, no_ver
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
-@click.option("-c", "--class", "object_class", multiple=True, help="Object class for new entry")
-@click.option("-a", "--attr", multiple=True, help="Attribute to add in the format name=value")
+@click.option(
+    "-c", "--class", "object_class", multiple=True, help="Object class for new entry"
+)
+@click.option(
+    "-a", "--attr", multiple=True, help="Attribute to add in the format name=value"
+)
 @click.option("--ldif-file", "ldif_file", help="LDIF file containing entry attributes")
 @click.option("--json-file", "json_file", help="JSON file containing entry attributes")
 @add_rich_help_option
 @handle_connection_error
-def add_command(host, dn, username, password, ssl, starttls, no_verify, port, object_class, attr, ldif_file, json_file):
+def add_command(
+    host,
+    dn,
+    username,
+    password,
+    ssl,
+    starttls,
+    no_verify,
+    port,
+    object_class,
+    attr,
+    ldif_file,
+    json_file,
+):
     """Add a new entry to the LDAP directory"""
     _warn_if_password_on_cli(password)
 
@@ -739,28 +879,28 @@ def add_command(host, dn, username, password, ssl, starttls, no_verify, port, ob
         starttls=starttls,
         no_verify=no_verify,
     )
-    
+
     # Connect to LDAP server
     server, conn = config.get_connection()
-    
+
     # Parse attributes from different sources
     attributes = {}
-    
+
     # Add object classes if specified
     if object_class:
-        attributes['objectClass'] = list(object_class)
-    
+        attributes["objectClass"] = list(object_class)
+
     # Load attributes from JSON file
     if json_file:
-        with open(json_file, 'r', encoding='utf-8') as f:
+        with open(json_file, "r", encoding="utf-8") as f:
             json_data = json_lib.load(f)
             for key, value in json_data.items():
                 attributes[key] = value
-    
+
     # Parse attributes from command line
     for a in attr:
         try:
-            name, value = a.split('=', 1)
+            name, value = a.split("=", 1)
             if name in attributes:
                 if isinstance(attributes[name], list):
                     attributes[name].append(value)
@@ -769,9 +909,11 @@ def add_command(host, dn, username, password, ssl, starttls, no_verify, port, ob
             else:
                 attributes[name] = value
         except ValueError:
-            console.print(f"[error]Invalid attribute format: {a}. Use name=value[/error]")
+            console.print(
+                f"[error]Invalid attribute format: {a}. Use name=value[/error]"
+            )
             sys.exit(1)
-    
+
     # Add entry
     if conn.add(dn, attributes=attributes):
         console.print(f"[success]Successfully added entry: {dn}[/success]")
@@ -779,19 +921,26 @@ def add_command(host, dn, username, password, ssl, starttls, no_verify, port, ob
         console.print(f"[error]Failed to add entry: {conn.result}[/error]")
         sys.exit(1)
 
+
 @cli.command("delete")
 @click.argument("host")
 @click.argument("dn")
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--recursive", is_flag=True, help="Delete recursively")
 @add_rich_help_option
 @handle_connection_error
-def delete_command(host, dn, username, password, ssl, starttls, no_verify, port, recursive):
+def delete_command(
+    host, dn, username, password, ssl, starttls, no_verify, port, recursive
+):
     """Delete an entry from the LDAP directory"""
     _warn_if_password_on_cli(password)
 
@@ -812,10 +961,10 @@ def delete_command(host, dn, username, password, ssl, starttls, no_verify, port,
         starttls=starttls,
         no_verify=no_verify,
     )
-    
+
     # Connect to LDAP server
     server, conn = config.get_connection()
-    
+
     try:
         if recursive:
             entry_utils.delete_entry(conn, dn, recursive=True)
@@ -826,14 +975,19 @@ def delete_command(host, dn, username, password, ssl, starttls, no_verify, port,
         console.print(f"[error]Failed to delete entry: {e}[/error]")
         sys.exit(1)
 
+
 @cli.command("modify")
 @click.argument("host")
 @click.argument("dn")
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--add", multiple=True, help="Add attribute in format name=value")
 @click.option("--replace", multiple=True, help="Replace attribute in format name=value")
@@ -841,7 +995,20 @@ def delete_command(host, dn, username, password, ssl, starttls, no_verify, port,
 @click.option("--file", help="JSON file with changes")
 @add_rich_help_option
 @handle_connection_error
-def modify_command(host, dn, username, password, ssl, starttls, no_verify, port, add, replace, delete, file):
+def modify_command(
+    host,
+    dn,
+    username,
+    password,
+    ssl,
+    starttls,
+    no_verify,
+    port,
+    add,
+    replace,
+    delete,
+    file,
+):
     """Modify an existing LDAP entry"""
     _warn_if_password_on_cli(password)
 
@@ -862,29 +1029,30 @@ def modify_command(host, dn, username, password, ssl, starttls, no_verify, port,
         starttls=starttls,
         no_verify=no_verify,
     )
-    
+
     # Connect to LDAP server
     server, conn = config.get_connection()
-    
+
     changes = {}
-    
+
     if file:
-        with open(file, 'r', encoding='utf-8') as f:
+        with open(file, "r", encoding="utf-8") as f:
             changes = json_lib.load(f)
     else:
         # Parse attributes
         changes = general_utils.parse_modification_attributes(add, replace, delete)
-        
+
     if not changes:
         console.print("[error]No changes specified.[/error]")
         sys.exit(1)
-        
+
     # Apply modifications
     if conn.modify(dn, changes):
         console.print(f"[success]Successfully modified entry: {dn}[/success]")
     else:
         console.print(f"[error]Failed to modify entry: {conn.result}[/error]")
         sys.exit(1)
+
 
 @cli.command("rename")
 @click.argument("host")
@@ -893,14 +1061,30 @@ def modify_command(host, dn, username, password, ssl, starttls, no_verify, port,
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--delete-old-rdn", is_flag=True, help="Delete old RDN", default=True)
 @click.option("--parent", help="New parent DN")
 @add_rich_help_option
 @handle_connection_error
-def rename_command(host, dn, new_rdn, username, password, ssl, starttls, no_verify, port, delete_old_rdn, parent):
+def rename_command(
+    host,
+    dn,
+    new_rdn,
+    username,
+    password,
+    ssl,
+    starttls,
+    no_verify,
+    port,
+    delete_old_rdn,
+    parent,
+):
     """Rename or move an LDAP entry"""
     _warn_if_password_on_cli(password)
 
@@ -921,10 +1105,10 @@ def rename_command(host, dn, new_rdn, username, password, ssl, starttls, no_veri
         starttls=starttls,
         no_verify=no_verify,
     )
-    
+
     # Connect to LDAP server
     server, conn = config.get_connection()
-    
+
     # Rename entry
     if conn.modify_dn(dn, new_rdn, delete_old_dn=delete_old_rdn, new_superior=parent):
         console.print("[success]Successfully renamed entry[/success]")
@@ -932,13 +1116,18 @@ def rename_command(host, dn, new_rdn, username, password, ssl, starttls, no_veri
         console.print(f"[error]Failed to rename entry: {conn.result}[/error]")
         sys.exit(1)
 
+
 @cli.command("interactive")
 @click.option("--host", help="LDAP server hostname")
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--base", help="Base DN for operations")
 @add_rich_help_option
@@ -947,7 +1136,7 @@ def interactive_command(host, username, password, ssl, starttls, no_verify, port
     """Start interactive LDAP console"""
     _warn_if_password_on_cli(password)
     console.print("[info]Starting interactive mode[/info]")
-    
+
     if host:
         # Configure LDAP connection
         config = LdapConfig(
@@ -959,15 +1148,16 @@ def interactive_command(host, username, password, ssl, starttls, no_verify, port
             starttls=starttls,
             no_verify=no_verify,
         )
-        
+
         # Connect to LDAP server
         server, conn = config.get_connection()
-        
+
         # Start interactive session with connection
         interactive_utils.start_interactive_session(server, conn, console, base)
     else:
         # Start interactive session without connection
         interactive_utils.start_interactive_session(None, None, console, None)
+
 
 @cli.command("export")
 @click.argument("host")
@@ -976,14 +1166,36 @@ def interactive_command(host, username, password, ssl, starttls, no_verify, port
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @click.option("--output", "output_file", required=True, help="Output file path")
-@click.option("--format", "fmt", type=click.Choice(["ldif", "json"]), default="ldif", help="Export format")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["ldif", "json"]),
+    default="ldif",
+    help="Export format",
+)
 @add_rich_help_option
 @handle_connection_error
-def export_command(host, base_dn, filter_query, username, password, ssl, starttls, no_verify, port, output_file, fmt):
+def export_command(
+    host,
+    base_dn,
+    filter_query,
+    username,
+    password,
+    ssl,
+    starttls,
+    no_verify,
+    port,
+    output_file,
+    fmt,
+):
     """Export LDAP entries to a file"""
     _warn_if_password_on_cli(password)
 
@@ -1016,7 +1228,9 @@ def export_command(host, base_dn, filter_query, username, password, ssl, starttl
     else:
         output_utils.output_ldif(entries, output_file)
 
-    console.print(f"[success]Exported {len(entries)} entries to {output_file}[/success]")
+    console.print(
+        f"[success]Exported {len(entries)} entries to {output_file}[/success]"
+    )
 
 
 @cli.command("import")
@@ -1025,8 +1239,12 @@ def export_command(host, base_dn, filter_query, username, password, ssl, starttl
 @click.option("-u", "--username", help="Bind DN for authentication")
 @click.option("-p", "--password", help="Password for authentication")
 @click.option("--ssl", is_flag=True, help="Use SSL/TLS connection")
-@click.option("--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS")
-@click.option("--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)")
+@click.option(
+    "--starttls", is_flag=True, help="Use STARTTLS to upgrade connection to TLS"
+)
+@click.option(
+    "--no-verify", is_flag=True, help="Skip TLS certificate verification (insecure)"
+)
 @click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)")
 @add_rich_help_option
 @handle_connection_error
@@ -1055,7 +1273,7 @@ def import_command(host, ldif_file, username, password, ssl, starttls, no_verify
     success_count = 0
     error_count = 0
     for entry in entries:
-        dn = entry.pop('dn', None)
+        dn = entry.pop("dn", None)
         if not dn:
             console.print("[error]Entry missing DN, skipping.[/error]")
             error_count += 1
@@ -1066,7 +1284,9 @@ def import_command(host, ldif_file, username, password, ssl, starttls, no_verify
             console.print(f"[error]Failed to add {dn}: {conn.result}[/error]")
             error_count += 1
 
-    console.print(f"[success]Import complete: {success_count} added, {error_count} errors[/success]")
+    console.print(
+        f"[success]Import complete: {success_count} added, {error_count} errors[/success]"
+    )
 
 
 def _parse_ldif_file(path: str):
@@ -1074,26 +1294,29 @@ def _parse_ldif_file(path: str):
     entries = []
     current_entry = {}
 
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
-            line = line.rstrip('\n\r')
+            line = line.rstrip("\n\r")
             if not line:
                 # Empty line marks end of entry
                 if current_entry:
                     entries.append(current_entry)
                     current_entry = {}
                 continue
-            if line.startswith('#'):
+            if line.startswith("#"):
                 continue
-            if ':' not in line:
+            if ":" not in line:
                 continue
-            attr, _, value = line.partition(':')
+            attr, _, value = line.partition(":")
             attr = attr.strip()
             value = value.strip()
             # Handle base64 values (attr:: value)
-            if value.startswith(':'):
+            if value.startswith(":"):
                 import base64
-                value = base64.b64decode(value[1:].strip()).decode('utf-8', errors='replace')
+
+                value = base64.b64decode(value[1:].strip()).decode(
+                    "utf-8", errors="replace"
+                )
             if attr in current_entry:
                 if isinstance(current_entry[attr], list):
                     current_entry[attr].append(value)
@@ -1111,37 +1334,42 @@ def _parse_ldif_file(path: str):
 def print_help():
     """
     Print detailed help information.
-    
+
     Displays usage information, available commands, and options
     in a user-friendly format using Rich formatting.
     """
     console.print("[usage]Usage:[/usage] ldapie [OPTIONS] COMMAND [ARGS]...")
     console.print("\nLDAPie - A modern LDAP client")
-    
+
     # Options section
     console.print("\n[bold]Options[/bold]")
     console.rule()
-    
+
     options_table = Table(show_header=False, box=None)
     options_table.add_column("Option", style="option")
     options_table.add_column("Description")
-    
-    options_table.add_row("--install-completion", "Install completion for the current shell.")
-    options_table.add_row("--show-completion", "Show completion for the current shell, to copy it or customize the installation.")
+
+    options_table.add_row(
+        "--install-completion", "Install completion for the current shell."
+    )
+    options_table.add_row(
+        "--show-completion",
+        "Show completion for the current shell, to copy it or customize the installation.",
+    )
     options_table.add_row("--demo", "Run the automated demo with mock LDAP server.")
     options_table.add_row("--help", "Show this message and exit.")
     options_table.add_row("--version", "Show the version and exit.")
-    
+
     console.print(options_table)
-    
+
     # Commands section
     console.print("\n[bold]Commands[/bold]")
     console.rule()
-    
+
     commands_table = Table(show_header=False, box=None)
     commands_table.add_column("Command", style="command")
     commands_table.add_column("Description")
-    
+
     commands_table.add_row("search", "Search the LDAP directory")
     commands_table.add_row("info", "Show information about LDAP server")
     commands_table.add_row("compare", "Compare two LDAP entries")
@@ -1151,11 +1379,14 @@ def print_help():
     commands_table.add_row("modify", "Modify an existing LDAP entry")
     commands_table.add_row("rename", "Rename or move an LDAP entry")
     commands_table.add_row("interactive", "Start interactive LDAP console")
-    
+
     console.print(commands_table)
-    
+
     # Additional help message
-    console.print("\n[info]Run 'ldapie COMMAND --help' for more information on a command.[/info]")
+    console.print(
+        "\n[info]Run 'ldapie COMMAND --help' for more information on a command.[/info]"
+    )
+
 
 if __name__ == "__main__":
     # This handles direct invocation of the script
@@ -1165,8 +1396,10 @@ if __name__ == "__main__":
         # Run the demo script
         try:
             # Add the parent directory to path for imports if needed
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            
+            sys.path.insert(
+                0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+
             # Import and run the demo
             try:
                 from tests.demo import run_demo
@@ -1174,14 +1407,16 @@ if __name__ == "__main__":
                 # Fall back to direct demo import if tests module isn't found
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 parent_dir = os.path.dirname(os.path.dirname(current_dir))
-                demo_path = os.path.join(parent_dir, 'tests')
+                demo_path = os.path.join(parent_dir, "tests")
                 if os.path.exists(demo_path):
                     sys.path.insert(0, parent_dir)
                     from tests.demo import run_demo
                 else:
                     msg = f"Could not find tests.demo module. Looked in {demo_path}"
-                    raise ImportError(msg) from None  # Using 'from None' to avoid chaining with original exception
-            
+                    raise ImportError(
+                        msg
+                    ) from None  # Using 'from None' to avoid chaining with original exception
+
             run_demo()
         except Exception as e:
             console.print(f"[error]Error running demo: {e}[/error]")

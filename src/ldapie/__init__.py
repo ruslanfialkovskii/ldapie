@@ -10,4 +10,4 @@ This is the main package that exports all the necessary modules and defines the 
 __version__ = "0.1.4"
 
 # Export modules
-from . import help_context, help_overlay, tab_completion, shell_enhancements
+from . import help_context, help_overlay, shell_enhancements, tab_completion

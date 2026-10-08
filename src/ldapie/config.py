@@ -14,23 +14,24 @@ yaml: Any = None
 YAML_AVAILABLE = False
 try:
     import yaml  # type: ignore[no-redef]
+
     YAML_AVAILABLE = True
 except ImportError:
     pass
 
 # Supported config keys and their types
 CONFIG_KEYS = {
-    'default_host': str,
-    'default_username': str,
-    'use_ssl': bool,
-    'port': int,
-    'theme': str,
-    'starttls': bool,
-    'no_verify': bool,
+    "default_host": str,
+    "default_username": str,
+    "use_ssl": bool,
+    "port": int,
+    "theme": str,
+    "starttls": bool,
+    "no_verify": bool,
 }
 
-USER_CONFIG_PATH = os.path.expanduser('~/.config/ldapie/config.yaml')
-PROJECT_CONFIG_PATH = '.ldapie.yaml'
+USER_CONFIG_PATH = os.path.expanduser("~/.config/ldapie/config.yaml")
+PROJECT_CONFIG_PATH = ".ldapie.yaml"
 
 
 def load_config() -> Dict[str, Any]:
@@ -70,7 +71,7 @@ def _load_yaml_file(path: str) -> Dict[str, Any]:
         Dict of parsed values, or empty dict on error.
     """
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if isinstance(data, dict):
             return data
