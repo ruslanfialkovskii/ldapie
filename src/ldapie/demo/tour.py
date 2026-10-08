@@ -434,7 +434,8 @@ def interactive_shell_demo(server, conn):
     )
 
     console.print("[bold]Interactive Mode Example:[/bold]")
-    console.print(Panel("""
+    console.print(
+        Panel("""
 [cyan]ldapie>[/cyan] connect ldap.example.com 389 cn=admin,dc=example,dc=com --starttls
 Enter password for cn=admin,dc=example,dc=com:
 [green]Connected to ldap.example.com[/green]
@@ -453,16 +454,19 @@ Base DN set to: dc=example,dc=com
 
 [cyan]ldapie>[/cyan] history
 [Recent filters, base DNs and hosts...]
-    """))
+    """)
+    )
 
     console.print("\n[bold]Shell Completion:[/bold]")
-    console.print(Panel("""
+    console.print(
+        Panel("""
 # Install completion for the current shell (bash, zsh or fish)
 [cyan]$[/cyan] ldapie --install-completion
 
 # Show the line to add to the shell config instead
 [cyan]$[/cyan] ldapie --show-completion
-    """))
+    """)
+    )
 
     pause_demo()
 

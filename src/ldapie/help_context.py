@@ -16,20 +16,35 @@ Key components:
 import shlex
 from collections import defaultdict, deque
 from difflib import get_close_matches
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import (
+    Any,
+    Callable,
+    Deque,
+    Dict,
+    FrozenSet,
+    List,
+    NamedTuple,
+    Optional,
+)
 
 from .utils import validate_dn, validate_search_filter
 
+# connect options: flags stand alone, valued options take the next word
 CONNECT_FLAGS = ("--ssl", "--starttls", "--no-verify")
+CONNECT_VALUE_OPTIONS = ("--ca-cert",)
+CONNECT_SYNTAX = (
+    "connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify] [--ca-cert FILE]"
+)
 
 # The shell's commands: syntax, examples, next steps and common errors
 COMMAND_PATTERNS: Dict[str, Dict[str, Any]] = {
     "connect": {
-        "syntax": "connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify]",
+        "syntax": CONNECT_SYNTAX,
         "examples": [
             "connect ldap.example.com",
             "connect ldap.example.com 636 cn=admin,dc=example,dc=com --ssl",
             "connect ldap.example.com 389 cn=admin,dc=example,dc=com --starttls",
+            "connect ldap.example.com --ssl --ca-cert ~/corp-ca.pem",
         ],
         "next_steps": [
             "Set the base DN: base dc=example,dc=com",
@@ -39,6 +54,7 @@ COMMAND_PATTERNS: Dict[str, Dict[str, Any]] = {
             "Without a bind DN the connection is anonymous",
             "You are prompted for the password (or set LDAP_PASSWORD)",
             "--no-verify disables certificate checks; use it only for testing",
+            "--ca-cert FILE verifies the server with your own CA bundle",
         ],
     },
     "base": {
@@ -107,6 +123,80 @@ def split_command(command_str: str) -> List[str]:
         return shlex.split(command_str)
     except ValueError:  # e.g. an unclosed quote while still typing
         return command_str.split()
+
+
+class ConnectArgs(NamedTuple):
+    """The parsed arguments of the shell's connect command."""
+
+    host: str
+    port: Optional[int]
+    bind_dn: Optional[str]
+    flags: FrozenSet[str]
+    ca_cert: Optional[str]
+
+    @property
+    def encrypted(self) -> bool:
+        return bool(self.flags & {"--ssl", "--starttls"})
+
+
+def parse_connect_args(args: List[str]) -> ConnectArgs:
+    """Parse and validate the words after ``connect``.
+
+    The shell's ``connect`` and ``validate connect`` share this, so what the
+    dry run accepts is exactly what the command accepts.
+
+    Raises:
+        ValueError: For a missing host, an unknown option, a valued option
+            without a value, a port out of range, a malformed bind DN or a
+            CA bundle without TLS.
+    """
+    positional: List[str] = []
+    flags = set()
+    options: Dict[str, str] = {}
+    words = iter(args)
+    for word in words:
+        if word in CONNECT_VALUE_OPTIONS:
+            value = next(words, None)
+            if value is None:
+                raise ValueError(f"{word} needs a value")
+            options[word] = value
+        elif word.startswith("--"):
+            if word not in CONNECT_FLAGS:
+                known = ", ".join(CONNECT_FLAGS + CONNECT_VALUE_OPTIONS)
+                raise ValueError(f"Unknown option '{word}'. Options: {known}")
+            flags.add(word)
+        else:
+            positional.append(word)
+
+    if not positional:
+        raise ValueError("connect needs a host")
+    host, rest = positional[0], positional[1:]
+    port = None
+    if rest and rest[0].isdigit():
+        port = int(rest.pop(0))
+        if not 0 < port < 65536:
+            raise ValueError(f"Port {port} is out of range")
+    if len(rest) > 1:
+        raise ValueError(f"Unexpected argument '{rest[1]}'")
+    bind_dn = rest[0] if rest else None
+    if bind_dn:
+        validate_dn(bind_dn)
+
+    ca_cert = options.get("--ca-cert")
+    if ca_cert and not flags & {"--ssl", "--starttls"}:
+        raise ValueError("--ca-cert needs --ssl or --starttls")
+    return ConnectArgs(host, port, bind_dn, frozenset(flags), ca_cert)
+
+
+def _required_argument_count(syntax: str) -> int:
+    """Count the syntax words outside [brackets], after the command name."""
+    depth = 0
+    count = 0
+    for word in syntax.split()[1:]:
+        if depth == 0 and not word.startswith("["):
+            count += 1
+        depth += word.count("[") - word.count("]")
+    return count
 
 
 class HelpContext:
@@ -223,10 +313,7 @@ class HelpContext:
 
         # Required arguments are the syntax words not wrapped in [ ]
         syntax = cmd_info["syntax"]
-        required_count = sum(
-            1 for word in syntax.split()[1:] if not word.startswith("[")
-        )
-        if len(parts) - 1 < required_count:
+        if len(parts) - 1 < _required_argument_count(syntax):
             return {
                 "error": f"Not enough arguments for '{cmd}'. Syntax: {syntax}",
                 "syntax": syntax,
@@ -281,38 +368,27 @@ class CommandValidator:
         return result
 
     def _validate_connect(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
-        args = analysis["arguments"]
-        unknown = [a for a in args if a.startswith("--") and a not in CONNECT_FLAGS]
-        if unknown:
-            return self._error(
-                analysis,
-                f"Unknown option '{unknown[0]}'. Options: {', '.join(CONNECT_FLAGS)}",
-            )
+        try:
+            args = parse_connect_args(analysis["arguments"])
+        except ValueError as e:
+            return self._error(analysis, str(e))
 
-        positional = [a for a in args if not a.startswith("--")]
-        host, rest = positional[0], positional[1:]
-        port = 636 if "--ssl" in args else 389
-        if rest and rest[0].isdigit():
-            port = int(rest.pop(0))
-            if not 0 < port < 65536:
-                return self._error(analysis, f"Port {port} is out of range")
-        bind_dn = rest[0] if rest else None
-        if bind_dn:
-            try:
-                validate_dn(bind_dn)
-            except ValueError as e:
-                return self._error(analysis, str(e))
-
-        encrypted = "--ssl" in args or "--starttls" in args
+        port = args.port or (636 if "--ssl" in args.flags else 389)
+        preview = (
+            f"Would connect to {args.host}:{port} as {args.bind_dn or 'anonymous'}"
+        )
+        if args.encrypted:
+            preview += " over TLS"
+        if args.ca_cert:
+            preview += f", verified with {args.ca_cert}"
         result = {
             **analysis,
             "validation": "Connect command looks valid",
-            "preview": f"Would connect to {host}:{port} as {bind_dn or 'anonymous'}"
-            + (" over TLS" if encrypted else ""),
+            "preview": preview,
         }
-        if "--no-verify" in args:
+        if "--no-verify" in args.flags:
             result["warning"] = "Certificate verification would be disabled"
-        elif not encrypted:
+        elif not args.encrypted:
             result["warning"] = "The connection would not be encrypted"
             result["suggestion"] = "Add --ssl or --starttls"
         return result

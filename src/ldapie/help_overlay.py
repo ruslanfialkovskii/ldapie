@@ -21,6 +21,7 @@ CONNECT_OPTIONS = [
     "--ssl: use an LDAPS connection",
     "--starttls: upgrade the connection with STARTTLS before binding",
     "--no-verify: skip certificate verification (insecure)",
+    "--ca-cert FILE: verify the server with your own CA bundle",
 ]
 
 

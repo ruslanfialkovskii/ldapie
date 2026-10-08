@@ -91,6 +91,42 @@ def test_validator_warns_when_not_connected():
     assert "Not connected" in result["warning"]
 
 
+def test_validator_handles_connect_ca_cert_option():
+    validator = CommandValidator()
+    result = validator.validate_command(
+        "connect ldap.example.com --ssl --ca-cert /etc/ssl/corp.pem"
+    )
+    assert "error" not in result, result
+    assert result["preview"] == (
+        "Would connect to ldap.example.com:636 as anonymous over TLS, "
+        "verified with /etc/ssl/corp.pem"
+    )
+
+    result = validator.validate_command("connect ldap.example.com --ca-cert")
+    assert result["error"] == "--ca-cert needs a value"
+
+    result = validator.validate_command("connect ldap.example.com --ca-cert ca.pem")
+    assert result["error"] == "--ca-cert needs --ssl or --starttls"
+
+    # Options alone are not a host
+    result = validator.validate_command("connect --ssl")
+    assert result["error"] == "connect needs a host"
+
+
+def test_validator_rejects_bad_connect_port_and_dn():
+    validator = CommandValidator()
+    assert "out of range" in validator.validate_command("connect host 70000")["error"]
+    assert "Invalid DN" in validator.validate_command("connect host 389 nope")["error"]
+
+
+def test_help_overlay_lists_every_connect_option():
+    from ldapie.help_context import CONNECT_FLAGS, CONNECT_VALUE_OPTIONS
+    from ldapie.help_overlay import CONNECT_OPTIONS
+
+    for option in CONNECT_FLAGS + CONNECT_VALUE_OPTIONS:
+        assert any(line.startswith(option) for line in CONNECT_OPTIONS), option
+
+
 def test_validator_rejects_unknown_connect_flag():
     result = CommandValidator().validate_command("connect ldap.example.com --bogus")
     assert "--bogus" in result["error"]

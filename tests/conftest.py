@@ -4,17 +4,11 @@
 Shared pytest fixtures for LDAPie tests.
 """
 
-import os
-import sys
-
 import pytest
 from click.testing import CliRunner
-from ldap3 import MOCK_SYNC, OFFLINE_SLAPD_2_4, Connection, Server
+from ldap3 import MOCK_SYNC, NONE, OFFLINE_SLAPD_2_4, Connection, Server
 
-# Ensure the src directory is on the path
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-)
+# src/ is on the import path through [tool.pytest.ini_options] in pyproject.toml
 
 BASE_DN = "dc=example,dc=com"
 ADMIN_DN = f"cn=admin,{BASE_DN}"
@@ -42,13 +36,9 @@ def cli_runner():
     return CliRunner()
 
 
-@pytest.fixture
-def ldap_server():
-    """A bound MOCK_SYNC connection with OpenLDAP schema and sample entries.
-
-    Returns the ``(server, connection)`` pair, like ``LdapConfig.get_connection``.
-    """
-    server = Server("mock", get_info=OFFLINE_SLAPD_2_4)
+def _mock_server(get_info):
+    """A bound MOCK_SYNC connection with sample entries, with or without schema."""
+    server = Server("mock", get_info=get_info)
     conn = Connection(
         server,
         user=ADMIN_DN,
@@ -80,9 +70,24 @@ def ldap_server():
 
 
 @pytest.fixture
+def ldap_server():
+    """A bound MOCK_SYNC connection with OpenLDAP schema and sample entries.
+
+    Returns the ``(server, connection)`` pair, like ``LdapConfig.get_connection``.
+    """
+    return _mock_server(OFFLINE_SLAPD_2_4)
+
+
+@pytest.fixture
+def ldap_server_no_schema():
+    """The same server without schema, like ``get_connection(get_info=NONE)``."""
+    return _mock_server(NONE)
+
+
+@pytest.fixture
 def mock_ldap(monkeypatch, ldap_server):
     """Route every LdapConfig connection (CLI and shell) to the mock server."""
     from ldapie.ldapie import LdapConfig
 
-    monkeypatch.setattr(LdapConfig, "get_connection", lambda self: ldap_server)
+    monkeypatch.setattr(LdapConfig, "get_connection", lambda self, **kw: ldap_server)
     return ldap_server

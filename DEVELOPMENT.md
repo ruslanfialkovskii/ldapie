@@ -2,55 +2,62 @@
 
 ### Development Setup
 
-To set up LDAPie for development:
+Dependencies are locked in `uv.lock`; [uv](https://docs.astral.sh/uv/) installs
+exactly those versions into `.venv`:
 
 ```bash
 # Clone the repository
 git clone https://github.com/ruslanfialkovskii/ldapie.git
 cd ldapie
 
-# Create a virtual environment
-python3 -m venv .venv
+# Create .venv with the package (editable) and the dev tools (pytest, ruff, mypy)
+make setup               # uv sync --frozen --extra dev
 source .venv/bin/activate
-
-# Install in develop mode with the dev tools (pytest, black, isort, flake8, pylint, mypy)
-pip install -e '.[dev]'
 ```
 
-With [mise](https://mise.jdx.dev), `mise run install` does the same in `.venv`.
+With [mise](https://mise.jdx.dev), `mise install` provides Python and uv and
+`mise run install` runs the sync; `mise run test`, `lint`, `typecheck`,
+`format` and `audit` call the matching `make` targets.
+
+Without uv, `pip install -e '.[dev]'` (or `make install`) installs the same
+tools at whatever versions pip resolves; CI and the Docker image use the
+lockfile.
 
 ### Running Tests
 
 ```bash
 # Run all tests
-pytest tests/
+make test                # pytest tests/
 
-# Run tests with coverage
-pytest --cov=ldapie tests/
+# Run tests with coverage (fails below 75%, the threshold in pyproject.toml)
+make cov                 # pytest --cov=ldapie --cov-report=term-missing tests/
 ```
 
 Tests use an in-memory ldap3 `MOCK_SYNC` server with the OpenLDAP schema
 (fixtures in `tests/conftest.py`), and run with `HOME` and the working
 directory pointed at a temporary directory, so they never touch your real
-history or config files.
+history or config files. The paged-search loop is tested with a fake
+connection in `tests/test_search.py`, because `MOCK_SYNC` has no paging.
 
 ### Code Style
 
-LDAPie follows PEP 8 style guidelines with some adjustments defined in the pyproject.toml file:
+[Ruff](https://docs.astral.sh/ruff/) formats the code, sorts imports and lints
+(it replaced black, isort, flake8 and pylint); its configuration is in
+`pyproject.toml` under `[tool.ruff]`.
 
 ```bash
-# Check code formatting and import order (CI fails on these)
-black --check src tests scripts
-isort --check-only --profile black src tests scripts
+# Sort imports and format
+make format
 
-# Fix code formatting
-isort --profile black src tests scripts
-black src tests scripts
+# Check import order and formatting without changing files (CI fails on these)
+make format-check
 
-# Run linting (flake8 is blocking in CI, pylint is advisory)
-flake8 src tests scripts
-pylint --rcfile=.pylintrc src/ldapie
+# Lint (CI fails on findings)
+make lint
 ```
+
+`pre-commit install` sets up git hooks that run ruff and mypy before each
+commit (configuration in `.pre-commit-config.yaml`).
 
 ### Type Checking
 
@@ -62,6 +69,21 @@ make typecheck
 ```
 
 `mypy.ini` holds the type-checking configuration; CI fails on mypy errors.
+
+### Dependencies
+
+- Runtime dependencies are declared in `pyproject.toml`; `uv.lock` pins the
+  whole tree. After changing `pyproject.toml`, run `make lock` and commit the
+  lockfile. `make lock` runs `uv lock --no-config`, so settings from a
+  user-level `~/.config/uv/uv.toml` (such as `exclude-newer`) never leak into
+  the shared lockfile; `make setup` uses `--frozen` for the same reason. CI
+  installs with `--locked` and fails if the lock and `pyproject.toml` disagree.
+- `make audit` checks the locked versions against known vulnerabilities with
+  pip-audit (part of the `dev` extra); CI runs the same target.
+- CI runs the Makefile targets (`make lint format-check typecheck audit` and
+  `make cov`) through `uv run`, so what passes locally passes in CI.
+- Dependabot (`.github/dependabot.yml`) opens pull requests for the lockfile,
+  the SHA-pinned GitHub Actions and the digest-pinned Docker base images.
 
 ### Release Process
 
@@ -85,7 +107,7 @@ The workflow will:
 - Update the CHANGELOG.md
 - Run tests across multiple Python versions
 - Create GitHub release with release notes
-- Publish to PyPI
+- Publish to PyPI (Trusted Publishing, see RELEASE.md)
 - Build and push Docker images
 - Update documentation references
 

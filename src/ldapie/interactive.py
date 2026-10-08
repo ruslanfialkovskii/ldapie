@@ -18,9 +18,14 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .help_context import CommandValidator, HelpContext
+from .help_context import (
+    CONNECT_SYNTAX,
+    CommandValidator,
+    HelpContext,
+    parse_connect_args,
+)
 from .help_overlay import show_help_overlay
-from .output import output_rich
+from .output import output_rich, safe_text
 from .schema import output_server_info_rich, show_schema
 from .search import paged_search
 from .tab_completion import QueryHistory, TabCompletion, readline
@@ -28,9 +33,9 @@ from .utils import validate_dn, validate_search_filter
 
 SEARCH_PAGE_SIZE = 500
 
-SHELL_HELP = dedent("""\
+SHELL_HELP = dedent(f"""\
     Available commands:
-    - connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify]
+    - {CONNECT_SYNTAX}
                                              Connect to LDAP server
     - base <dn>                              Set base DN for operations
     - search [filter] [attributes...]        Search the directory
@@ -142,8 +147,9 @@ class LDAPShell(cmd.Cmd):
         self.help_context.add_command(line)
         try:
             return bool(super().onecmd(line))
-        except Exception as e:  # pylint: disable=broad-except
-            self.console.print(f"[error]Error: {e}[/error]")
+        except Exception as e:
+            # Exception text can carry server data; see output.safe_text
+            self.console.print(f"[error]Error: {safe_text(str(e))}[/error]")
             return False
 
     def default(self, line: str) -> None:
@@ -189,44 +195,32 @@ class LDAPShell(cmd.Cmd):
         """
         Connect to an LDAP server
         Usage: connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify]
+               [--ca-cert FILE]
         """
         # Imported here: ldapie.ldapie imports this module
         from .ldapie import LdapConfig
 
         try:
-            args = shlex.split(arg)
+            args = parse_connect_args(shlex.split(arg))
         except ValueError as e:
-            self.console.print(f"[error]Invalid arguments: {e}[/error]")
+            self.console.print(f"[error]Invalid arguments: {escape(str(e))}[/error]")
+            self.console.print(Text(f"Usage: {CONNECT_SYNTAX}"))
             return
-        flags = {a for a in args if a.startswith("--")}
-        positional = [a for a in args if not a.startswith("--")]
-        unknown = flags - {"--ssl", "--starttls", "--no-verify"}
-        if not positional or unknown:
-            self.console.print(
-                "[error]Usage: connect host [port] [bind_dn] "
-                "[--ssl] [--starttls] [--no-verify][/error]"
-            )
-            return
-
-        host = positional.pop(0)
-        port = (
-            int(positional.pop(0)) if positional and positional[0].isdigit() else None
-        )
-        username = positional[0] if positional else None
-        use_ssl = "--ssl" in flags
 
         config = LdapConfig(
-            host=host,
-            username=username,
-            use_ssl=use_ssl,
-            port=port,
-            starttls="--starttls" in flags,
-            no_verify="--no-verify" in flags,
+            host=args.host,
+            username=args.bind_dn,
+            use_ssl="--ssl" in args.flags,
+            port=args.port,
+            starttls="--starttls" in args.flags,
+            no_verify="--no-verify" in args.flags,
+            ca_cert=os.path.expanduser(args.ca_cert) if args.ca_cert else None,
         )
         try:
             server, conn = config.get_connection()
-        except LDAPException as e:
-            self.console.print(f"[error]Connection failed: {e}[/error]")
+        except (LDAPException, OSError) as e:
+            # The server's diagnostic message is part of the exception text
+            self.console.print(f"[error]Connection failed: {safe_text(str(e))}[/error]")
             return
 
         if self.conn is not None and self.conn is not conn:
@@ -236,13 +230,13 @@ class LDAPShell(cmd.Cmd):
                 pass
         self.server, self.conn = server, conn
         self.connected = True
-        self.console.print(f"[success]Connected to {host}[/success]")
-        self.query_history.add_host(host)
+        self.console.print(f"[success]Connected to {escape(args.host)}[/success]")
+        self.query_history.add_host(args.host)
         self._update_prompt()
         self.help_context.update_session_state(
             connected=True,
-            authenticated=username is not None,
-            ssl_enabled=use_ssl or "--starttls" in flags,
+            authenticated=args.bind_dn is not None,
+            ssl_enabled=args.encrypted,
         )
 
     def do_base(self, arg: str) -> None:
@@ -302,7 +296,7 @@ class LDAPShell(cmd.Cmd):
                 SEARCH_PAGE_SIZE,
             )
         except LDAPException as e:
-            self.console.print(f"[error]Search failed: {e}[/error]")
+            self.console.print(f"[error]Search failed: {safe_text(str(e))}[/error]")
             return
 
         self.query_history.add_search(filter_query)
@@ -347,7 +341,7 @@ class LDAPShell(cmd.Cmd):
         """Exit the interactive console"""
         return self.do_exit(arg)
 
-    def do_EOF(self, arg: str) -> bool:  # pylint: disable=invalid-name
+    def do_EOF(self, arg: str) -> bool:  # the method name cmd.Cmd looks for
         """Exit on Ctrl-D or end of input"""
         self.console.print()
         return self.do_exit(arg)

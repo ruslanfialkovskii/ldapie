@@ -48,7 +48,7 @@ class MockLdapServer:
                 self.naming_contexts = ["dc=example,dc=com"]
 
         # Replace the offline DSA info with demo-specific details
-        self.server._dsa_info = MockServerInfo()  # pylint: disable=protected-access
+        self.server._dsa_info = MockServerInfo()  # ldap3 has no setter for this
 
     def get_connection(self):
         """Return the mock LDAP connection"""

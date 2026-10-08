@@ -10,8 +10,9 @@ from typing import Any, Dict, List, Optional
 from ldap3 import Server
 from rich import box
 from rich.console import Console
-from rich.markup import escape
 from rich.table import Table
+
+from .output import safe_text
 
 
 def _as_list(value: Any) -> List[Any]:
@@ -26,7 +27,7 @@ def _as_list(value: Any) -> List[Any]:
 def _text(value: Any, empty: str = "") -> str:
     """Join a schema field into escaped display text."""
     items = [str(v) for v in _as_list(value)]
-    return escape(", ".join(items)) if items else empty
+    return safe_text(", ".join(items)) if items else empty
 
 
 def _oid_label(oid: Any) -> str:
@@ -83,7 +84,7 @@ def output_server_info_rich(server: Server, console: Console) -> None:
         ("Naming Contexts", "\n".join(info["naming_contexts"])),
     ]
     for label, value in rows:
-        table.add_row(label, escape(value) if value else "None")
+        table.add_row(label, safe_text(value) if value else "None")
 
     console.print(table)
 
@@ -144,11 +145,11 @@ def show_schema(
         oc_info = server.schema.object_classes.get(object_class)
         if not oc_info:
             console.print(
-                f"[error]Object class '{escape(object_class)}' not found in schema.[/error]"
+                f"[error]Object class '{safe_text(object_class)}' not found in schema.[/error]"
             )
             return
 
-        table = Table(title=f"Object Class: {escape(object_class)}", box=box.ROUNDED)
+        table = Table(title=f"Object Class: {safe_text(object_class)}", box=box.ROUNDED)
         table.add_column("Property", style="ldap.attr")
         table.add_column("Value", style="ldap.value")
 
@@ -162,7 +163,7 @@ def show_schema(
             ("Parent Classes", oc_info.superior),
         ):
             items = sorted(str(v) for v in _as_list(values))
-            table.add_row(label, escape("\n".join(items)) if items else "None")
+            table.add_row(label, safe_text("\n".join(items)) if items else "None")
 
         console.print(table)
 
@@ -170,11 +171,11 @@ def show_schema(
         attr_info = server.schema.attribute_types.get(attribute)
         if not attr_info:
             console.print(
-                f"[error]Attribute '{escape(attribute)}' not found in schema.[/error]"
+                f"[error]Attribute '{safe_text(attribute)}' not found in schema.[/error]"
             )
             return
 
-        table = Table(title=f"Attribute: {escape(attribute)}", box=box.ROUNDED)
+        table = Table(title=f"Attribute: {safe_text(attribute)}", box=box.ROUNDED)
         table.add_column("Property", style="ldap.attr")
         table.add_column("Value", style="ldap.value")
 
@@ -200,6 +201,6 @@ def show_schema(
         table.add_column("Description", style="ldap.value")
 
         for name, oc_info in sorted(server.schema.object_classes.items()):
-            table.add_row(escape(name), _text(oc_info.description))
+            table.add_row(safe_text(name), _text(oc_info.description))
 
         console.print(table)

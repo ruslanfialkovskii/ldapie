@@ -13,7 +13,8 @@ Status as of 0.2.0 (October 2026). What the tool does today is described in
 - Shell completion for bash, zsh and fish (`ldapie --install-completion`)
 - Demo mode against a mock LDAP server (`ldapie --demo`)
 - PyPI package, multi-architecture Docker image, automated release workflow
-- CI: black, isort, flake8 and mypy are blocking; tests run on Python 3.10 to 3.13
+- CI: ruff (lint, imports, formatting), mypy and a dependency audit are
+  blocking; tests run on Python 3.10 to 3.13 against `uv.lock`
 
 ## Ideas, not scheduled
 

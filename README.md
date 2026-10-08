@@ -44,17 +44,19 @@ LDAP server.
   `export` and `import`, plus an interactive shell
 - Output as Rich tables (default), JSON, LDIF, CSV or a tree
 - Paged results by default, so server size limits do not truncate silently
-- LDAPS and STARTTLS, with certificate verification on by default
+- LDAPS and STARTTLS, with certificate verification on by default, against the
+  system trust store or your own CA bundle
 - Passwords from a prompt or `LDAP_PASSWORD`; never required on the command line
-- Defaults from a user-level and a per-project config file
+- Defaults from a user-level config file, plus a per-project file that can only
+  tighten them
 - Interactive shell with tab completion, query history and context help
 - Shell completion for bash, zsh and fish
 - Dark and light themes
 
 ## Installation
 
-LDAPie needs Python 3.10 or newer. Its dependencies (`ldap3`, `rich`, `click`,
-`pyyaml`) install from PyPI without any system packages.
+LDAPie needs Python 3.10 or newer. Its dependencies (`ldap3`, `pyasn1`, `rich`,
+`click`, `pyyaml`) install from PyPI without any system packages.
 
 ```bash
 # PyPI (a virtual environment or pipx is recommended)
@@ -107,10 +109,15 @@ Every command that connects takes the same options:
 | `--ssl / --no-ssl` | Use LDAPS (default port 636) |
 | `--starttls / --no-starttls` | Upgrade the connection with STARTTLS before binding |
 | `--verify / --no-verify` | Verify the server certificate (default: verify) |
+| `--ca-cert FILE` | PEM bundle with the CA certificates that sign the server certificate (default: the system trust store) |
 | `--port` | Port (default: 389, or 636 with `--ssl`) |
+| `--timeout SECONDS` | Wait this long for the connection and for each server response (default: 30) |
 
 With STARTTLS the connection is upgraded before the bind, so credentials never
-travel in clear text. `--no-verify` prints a warning every time it is used.
+travel in clear text. The server name is sent in the TLS handshake (SNI), so a
+server that hosts several names presents the right certificate. For a private
+CA, point `--ca-cert` at its bundle instead of turning verification off;
+`--no-verify` prints a warning every time it is used.
 
 ### Passwords
 
@@ -241,7 +248,7 @@ ldapie interactive --host ldap.example.com -u "cn=admin,dc=example,dc=com" --bas
 Inside the shell:
 
 ```text
-connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify]
+connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify] [--ca-cert FILE]
 base <dn>                          set the base DN (shown in the prompt)
 search [filter] [attribute...]     search below the base DN
 info                               server information
@@ -255,7 +262,9 @@ exit, quit, Ctrl-D                 leave the shell
 
 The shell has tab completion and keeps readline history in `~/.ldapie_history`
 and query history in `~/.ldapie_query_history.json`. Errors never end the
-session.
+session. `connect` takes only its own options: `ca_cert`, `timeout` and the
+other config-file defaults apply to `ldapie interactive --host`, not to
+`connect` inside the shell.
 
 ## Output formats
 
@@ -264,18 +273,28 @@ session.
 | (none) | One Rich panel per entry with an attribute table |
 | `--json` | Array of objects with `dn`; single-valued attributes are scalars, multi-valued ones arrays. Binary values are `base64:...` strings, timestamps ISO 8601 |
 | `--ldif` | RFC 2849 from the raw values: `version: 1`, `::` base64 for binary or non-ASCII values, lines folded at 76 characters. Round-trips through `import` |
-| `--csv` | One column per attribute seen in any entry, plus `dn`; multiple values joined with `;` |
+| `--csv` | One column per attribute seen in any entry, plus `dn`; multiple values joined with `;`. Cells a spreadsheet would run as a formula (starting with `=`, `+`, `-`, `@` or a tab) get a leading `'`; this includes `+49...` phone numbers |
 | `--tree` | Entry hierarchy below the base DN with attributes |
 
 Results go to stdout and status messages to stderr. Non-TTY output has no
 color codes, so the default format is readable in a file or a pager too.
 
+Directory data is not trusted: in the table, tree and CSV formats, control
+characters in values (such as the escape sequences a terminal would act on)
+are printed as `\xNN`. JSON escapes them and LDIF base64-encodes them, so
+those formats keep the data intact.
+
+`export` writes entries as they arrive, page by page, so exporting a large
+directory does not need the memory to hold it. Files given with `--output`
+are written to a temporary file first and renamed into place at the end, so
+a failed export leaves no partial file and keeps the previous one; they are
+created readable by their owner only. `--limit` on `search` asks the server
+for no more entries than wanted, even with paging on.
+
 ## Configuration file
 
-Defaults for the connection options live in `~/.config/ldapie/config.yaml`
-(user level) and `./.ldapie.yaml` (project level, read from the current
-directory). The project file overrides the user file, and options on the
-command line override both.
+Defaults for the connection options live in `~/.config/ldapie/config.yaml`.
+Options on the command line override it.
 
 ```yaml
 default_host: ldap.example.com   # used by `ldapie interactive` without --host
@@ -283,13 +302,27 @@ default_username: cn=admin,dc=example,dc=com
 use_ssl: false
 starttls: true
 port: 389
+ca_cert: ~/corp-ca.pem           # CA bundle for certificate verification
+timeout: 30                      # seconds, connection and each response
 theme: dark                      # or light
-no_verify: false                 # user-level file only
+no_verify: false
 ```
 
-`no_verify` is ignored in `./.ldapie.yaml`, with a warning: a project file can
-come from a cloned repository and must not be able to turn off certificate
-checks. Unknown keys and values of the wrong type are skipped with a warning.
+A project file, `./.ldapie.yaml` in the current directory, may come from a
+cloned repository, so it cannot choose where LDAPie connects or weaken the
+connection. It may set only:
+
+```yaml
+theme: light
+use_ssl: true                    # true only: a project file can turn TLS on, not off
+starttls: true
+```
+
+Every other key in the project file is ignored with a warning, as are
+`use_ssl: false` and `starttls: false`. When a project file contributes
+settings, LDAPie says so on stderr (`Config: .ldapie.yaml: using theme`).
+Unknown keys and values of the wrong type are skipped with a warning in both
+files.
 
 ## Themes
 
@@ -336,7 +369,8 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd)":/data ruslanfialkovsky/ld
 ```
 
 `LDAPIE_THEME` and `LDAP_PASSWORD` work in the container as they do locally.
-To build the image yourself, run `docker build -t ldapie .` in a checkout.
+To build the image yourself, run `docker build -t ldapie .` in a checkout; the
+image installs the exact dependency versions from `uv.lock`.
 
 ## Development
 
@@ -346,8 +380,8 @@ Changes per version are listed in
 [CHANGELOG.md](https://github.com/ruslanfialkovskii/ldapie/blob/main/CHANGELOG.md).
 
 ```bash
-pip install -e '.[dev]'
-pytest tests/
+uv sync --extra dev     # or: pip install -e '.[dev]'
+make test
 ```
 
 ## License

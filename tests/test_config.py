@@ -38,7 +38,7 @@ def captured_config(monkeypatch, ldap_server):
     """Record the LdapConfig each command connects with."""
     seen = []
 
-    def fake_get_connection(config):
+    def fake_get_connection(config, **kwargs):
         seen.append(config)
         return ldap_server
 
@@ -46,10 +46,48 @@ def captured_config(monkeypatch, ldap_server):
     return seen
 
 
-def test_project_config_overrides_user_config(user_config, project_config):
-    user_config("default_username: cn=user\nport: 1389\n")
-    project_config("port: 2389\n")
-    assert load_config() == {"default_username": "cn=user", "port": 2389}
+def test_project_config_can_only_set_theme_and_turn_tls_on(user_config, project_config):
+    user_config("default_username: cn=user\nport: 1389\nuse_ssl: false\n")
+    project_config(
+        "theme: light\n"
+        "starttls: true\n"
+        "port: 2389\n"
+        "default_host: evil.example.net\n"
+        "default_username: cn=admin\n"
+        "ca_cert: /tmp/evil-ca.pem\n"
+        "timeout: 1\n"
+    )
+    warnings, notices = [], []
+    assert load_config(warnings.append, notices.append) == {
+        "default_username": "cn=user",
+        "port": 1389,
+        "use_ssl": False,
+        "theme": "light",
+        "starttls": True,
+    }
+    for key in ("port", "default_host", "default_username", "ca_cert", "timeout"):
+        assert any(f"'{key}'" in w for w in warnings), (key, warnings)
+    assert notices == [".ldapie.yaml: using starttls, theme"]
+
+
+def test_project_config_cannot_turn_tls_off(user_config, project_config):
+    user_config("use_ssl: true\nstarttls: true\n")
+    project_config("use_ssl: false\nstarttls: false\n")
+    warnings, notices = [], []
+    config = load_config(warnings.append, notices.append)
+    assert config["use_ssl"] is True
+    assert config["starttls"] is True
+    assert len([w for w in warnings if "can only turn TLS on" in w]) == 2
+    assert notices == []
+
+
+def test_config_warnings_are_sanitized(cli_runner, project_config):
+    """A key from a cloned repository's file is quoted in the warning."""
+    project_config('"\\e[2J evil": 1\n')
+    result = cli_runner.invoke(cli, ["--show-completion"], env={"SHELL": "/bin/bash"})
+    assert result.exit_code == 0, result.output
+    assert "\x1b" not in result.output
+    assert "\\x1b[2J evil" in result.output
 
 
 def test_project_config_cannot_disable_tls_verification(user_config, project_config):
@@ -62,11 +100,27 @@ def test_project_config_cannot_disable_tls_verification(user_config, project_con
     assert load_config()["no_verify"] is True
 
 
+def test_project_config_cannot_choose_the_server(
+    cli_runner, project_config, captured_config, monkeypatch
+):
+    """A cloned repository must not be able to point the shell, and the
+    user's LDAP_PASSWORD, at a server of its choosing."""
+    project_config("default_host: evil.example.net\ndefault_username: cn=admin,dc=x\n")
+    monkeypatch.setenv("LDAP_PASSWORD", "s3cret")
+    result = cli_runner.invoke(cli, ["interactive"], input="exit\n")
+    assert result.exit_code == 0, result.output
+    assert captured_config == []
+    assert "ignoring 'default_host'" in result.output
+    assert "ignoring 'default_username'" in result.output
+
+
 @pytest.mark.parametrize(
     "text, message",
     [
         ("port: abc\n", "expected int"),
         ("port: true\n", "expected int"),
+        ("port: 0\n", "positive"),
+        ("timeout: -5\n", "positive"),
         ("use_ssl: 'yes'\n", "expected bool"),
         ("theme: neon\n", "theme"),
         ("colour: red\n", "unknown setting"),
@@ -160,3 +214,53 @@ def test_defaults_without_config(cli_runner, captured_config):
     assert config.use_ssl is False
     assert config.starttls is False
     assert config.no_verify is False
+    assert config.ca_cert is None
+    assert config.timeout == 30
+
+
+def test_ca_cert_and_timeout_from_config(
+    cli_runner, user_config, captured_config, isolated_home
+):
+    (isolated_home / "ca.pem").write_text("cert")
+    user_config("ca_cert: ~/ca.pem\ntimeout: 5\n")
+    result = cli_runner.invoke(cli, ["search", "ldap.example.com", BASE_DN])
+    assert result.exit_code == 0, result.output
+    (config,) = captured_config
+    assert config.ca_cert == str(isolated_home / "ca.pem")
+    assert config.timeout == 5
+
+
+def test_ca_cert_and_timeout_from_command_line(cli_runner, captured_config, tmp_path):
+    ca = tmp_path / "corp.pem"
+    ca.write_text("cert")
+    result = cli_runner.invoke(
+        cli,
+        [
+            "search",
+            "ldap.example.com",
+            BASE_DN,
+            "--ssl",
+            "--ca-cert",
+            str(ca),
+            "--timeout",
+            "3",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    (config,) = captured_config
+    assert config.ca_cert == str(ca)
+    assert config.timeout == 3
+
+    result = cli_runner.invoke(
+        cli,
+        [
+            "search",
+            "ldap.example.com",
+            BASE_DN,
+            "--ssl",
+            "--ca-cert",
+            str(tmp_path / "x"),
+        ],
+    )
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
