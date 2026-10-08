@@ -23,8 +23,17 @@ MANIFEST
 
 # Virtual Environment
 venv/
+.venv/
 env/
 ENV/
+
+# Local config and secrets
+.env
+.ldapie.yaml
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
 
 # IDE
 .idea/

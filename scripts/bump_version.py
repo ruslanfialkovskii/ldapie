@@ -11,7 +11,13 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+# Files whose version string is rewritten. The version lives in exactly one place,
+# src/ldapie/__init__.py; pyproject.toml reads it dynamically (tool.setuptools.dynamic).
+VERSION_FILES = ["src/ldapie/__init__.py"]
+
+VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+", re.ASCII)
 
 
 def parse_args():
@@ -20,6 +26,13 @@ def parse_args():
         "bump_type",
         choices=["patch", "minor", "major"],
         help="The type of version bump to perform",
+    )
+    parser.add_argument(
+        "--set-version",
+        type=str,
+        default="",
+        metavar="X.Y.Z",
+        help="Use this exact version instead of the one computed from bump_type",
     )
     parser.add_argument(
         "--dry-run",
@@ -83,6 +96,22 @@ def calculate_new_version(current_version: str, bump_type: str) -> str:
         raise ValueError(f"Unknown bump type: {bump_type}")
 
 
+def resolve_new_version(
+    current_version: str, bump_type: str, set_version: Optional[str] = None
+) -> str:
+    """
+    Return the explicit version when given (validated), else the bumped version
+    """
+    if not set_version:
+        return calculate_new_version(current_version, bump_type)
+
+    if not VERSION_PATTERN.fullmatch(set_version):
+        raise ValueError(f"Invalid --set-version '{set_version}', expected X.Y.Z")
+    if set_version == current_version:
+        raise ValueError(f"--set-version {set_version} equals the current version")
+    return set_version
+
+
 def update_version_in_file(
     file_path: str, current_version: str, new_version: str, dry_run: bool = False
 ) -> bool:
@@ -115,19 +144,13 @@ def update_version_in_file(
 
 def get_list_of_version_files(current_version: str) -> List[str]:
     """
-    Get a list of files that potentially contain version information
+    Get the version files that exist and contain the current version string
     """
-    # Basic list of files to check
-    files_to_check = [
-        "src/ldapie/__init__.py",
-        "pyproject.toml",
-        "setup.py",
-        "README.md",
-        "CONTAINER.md",
+    return [
+        f
+        for f in VERSION_FILES
+        if Path(f).exists() and current_version in Path(f).read_text()
     ]
-
-    # Filter to only existing files
-    return [f for f in files_to_check if Path(f).exists()]
 
 
 def update_changelog(
@@ -146,6 +169,24 @@ def update_changelog(
             )
 
     today = datetime.now().strftime("%Y-%m-%d")
+
+    # Notes collected under "# Unreleased" become the new version's entry
+    content = changelog_path.read_text() if changelog_path.exists() else ""
+    unreleased = re.search(r"^#{1,2} Unreleased[ \t]*$", content, re.MULTILINE)
+    if unreleased:
+        heading = f"# {new_version} ({today})"
+        if dry_run:
+            print(f"Would rename the Unreleased section of CHANGELOG.md to '{heading}'")
+            return True
+        extra = f"\n\n{message}" if message else ""
+        changelog_path.write_text(
+            content[: unreleased.start()]
+            + heading
+            + extra
+            + content[unreleased.end() :]
+        )
+        print(f"Renamed the Unreleased section of CHANGELOG.md to '{heading}'")
+        return True
 
     if message:
         # User provided a custom message
@@ -167,8 +208,13 @@ def update_changelog(
             # Insert after the intro section
             pattern = r"(# Changelog.*?adheres to \[Semantic Versioning\].*?\n\n)"
             if re.search(pattern, content, re.DOTALL):
+                # Callable replacement: a custom message may contain backslashes
                 updated_content = re.sub(
-                    pattern, r"\1" + new_entry, content, flags=re.DOTALL
+                    pattern,
+                    lambda m: m.group(1) + new_entry,
+                    content,
+                    count=1,
+                    flags=re.DOTALL,
                 )
             else:
                 # Fallback if pattern not found
@@ -201,14 +247,7 @@ def commit_changes(
         )
 
         # Add modified files
-        subprocess.run(
-            ["git", "add", "src/ldapie/__init__.py", "CHANGELOG.md"], check=True
-        )
-
-        # Add optional files if they exist
-        for file in ["pyproject.toml", "setup.py", "README.md", "CONTAINER.md"]:
-            if Path(file).exists():
-                subprocess.run(["git", "add", file], check=True)
+        subprocess.run(["git", "add", *VERSION_FILES, "CHANGELOG.md"], check=True)
 
         # Commit changes
         commit_message = f"Bump version to {new_version}"
@@ -248,7 +287,9 @@ def main():
 
     try:
         current_version = get_current_version()
-        new_version = calculate_new_version(current_version, args.bump_type)
+        new_version = resolve_new_version(
+            current_version, args.bump_type, args.set_version
+        )
 
         print(f"Current version: {current_version}")
         print(f"New version: {new_version}")
