@@ -1,13 +1,13 @@
-.PHONY: setup install test demo clean lint flake typecheck
+.PHONY: all setup install test demo clean lint flake typecheck format dist help \
+	install-completion install-completion-zsh install-completion-bash install-completion-fish
 
 # Default target
 all: install
 
 # Setup development environment
 setup:
-	python -m venv venv
-	. venv/bin/activate && pip install -r requirements.txt
-	. venv/bin/activate && pip install -e .
+	python -m venv .venv
+	. .venv/bin/activate && pip install -e '.[dev]'
 
 # Install the package
 install:
@@ -15,20 +15,21 @@ install:
 
 # Run tests
 test:
-	python ./tests/test_completion.py
-	python ./tests/test_context_help.py
-	python -m unittest discover -s tests -p "*.py" -v
+	pytest tests/
 
 # Run the demo
 demo:
-	python tests/demo.py
+	ldapie --demo
 
-# Run lint checks
+# Run pylint
 lint:
-	pylint --rcfile=.pylintrc ./src/ldapie
-	pylint --rcfile=.pylintrc ./ldapie
+	pylint --rcfile=.pylintrc src/ldapie
+
+# Run flake8
 flake:
-	flake8 src tests
+	flake8 src tests scripts
+
+# Run mypy
 typecheck:
 	cd src && PYTHONPATH=. mypy --config-file=../mypy.ini ldapie
 
@@ -62,39 +63,33 @@ clean:
 	rm -rf build/
 	rm -rf dist/
 	rm -rf *.egg-info
-	rm -rf __pycache__/
-	rm -rf src/__pycache__/
-	rm -rf tests/__pycache__/
-	find . -type d -name __pycache__ -exec rm -rf {} +
-	find . -type f -name '*.pyc' -delete
+	rm -rf src/*.egg-info
+	find . -type d -name __pycache__ -not -path './.venv/*' -not -path './venv/*' -exec rm -rf {} +
+	find . -type f -name '*.pyc' -not -path './.venv/*' -not -path './venv/*' -delete
 
-# Build distribution packages
+# Build distribution packages (sdist and wheel)
 dist:
-	python setup.py sdist bdist_wheel
+	python -m build
 
-# Format code with Black
+# Sort imports, then format code with Black
 format:
-	black src tests
-
-# Generate documentation
-docs:
-	cd docs && make html
+	isort --profile black src tests scripts
+	black src tests scripts
 
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  setup             - Set up development environment"
+	@echo "  setup             - Create .venv and install the package with dev extras"
 	@echo "  install           - Install the package in development mode"
-	@echo "  test              - Run tests"
+	@echo "  test              - Run tests with pytest"
 	@echo "  demo              - Run the demo with mock LDAP server"
 	@echo "  install-completion - Install shell completion for all supported shells"
 	@echo "  install-completion-zsh - Install shell completion for zsh"
 	@echo "  install-completion-bash - Install shell completion for bash"
 	@echo "  install-completion-fish - Install shell completion for fish"
 	@echo "  clean             - Clean up temporary files and builds"
-	@echo "  dist              - Build distribution packages"
-	@echo "  lint              - Check for lint issues"
-	@echo "  flake             - Run flake8 linting"
+	@echo "  dist              - Build sdist and wheel (python -m build)"
+	@echo "  lint              - Run pylint on src/ldapie"
+	@echo "  flake             - Run flake8 on src, tests and scripts"
 	@echo "  typecheck         - Run mypy type checking"
-	@echo "  format            - Format code with Black"
-	@echo "  docs              - Generate documentation"
+	@echo "  format            - Sort imports with isort and format with Black"

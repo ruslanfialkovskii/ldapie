@@ -3,7 +3,7 @@
 A modern LDAP client CLI tool inspired by [HTTPie](https://httpie.io), using [ldap3](https://github.com/cannatag/ldap3) for LDAP operations and [Rich](https://github.com/Textualize/rich) for beautiful terminal output.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python Version](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
 LDAPie makes LDAP operations more accessible and intuitive with a modern command-line interface, beautiful output, and comprehensive features for both beginners and LDAP experts.
 
@@ -31,16 +31,13 @@ LDAPie makes LDAP operations more accessible and intuitive with a modern command
 git clone https://github.com/ruslanfialkovskii/ldapie.git
 cd ldapie
 
-# Create a virtual environment and install dependencies
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Make the wrapper scripts executable
-chmod +x ldapie ldapie.sh
+# Create a virtual environment and install LDAPie with its dependencies
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
 
 # Try the automated demo with a mock LDAP server
-./ldapie.sh --demo
+ldapie --demo
 
 # Install shell completion (optional)
 ./ldapie --install-completion
@@ -91,17 +88,16 @@ cd ldapie
 # Install from source
 pip install .
 
-# Alternatively, install in development mode
-pip install -e .
+# Alternatively, install in development mode with the dev tools
+pip install -e '.[dev]'
 ```
 
-### Option 3: Quick Setup Script
+### Option 3: Run From a Checkout Without Installing
+
+The `ldapie` script in the repository root runs the sources in `src/`
+(the dependencies must be installed, e.g. `pip install -r requirements.txt`):
 
 ```bash
-# Make the wrapper script executable
-chmod +x ldapie
-
-# Use the wrapper script directly
 ./ldapie search localhost "dc=example,dc=com"
 ```
 
@@ -121,17 +117,12 @@ LDAPie requires the following Python packages, which will be automatically insta
 
 - ldap3 >= 2.9, < 3.0: For LDAP functionality
 - rich >= 12.0.0: For beautiful terminal output
-- click >= 7.0: For command-line interface
-- pydantic >= 1.9.0: For data validation
-- typer >= 0.6.0: For command-line typing
+- click >= 8.0: For command-line interface
 - pyyaml >= 6.0: For configuration files
-- cryptography >= 38.0.0: For secure connections
-- python-dotenv >= 0.20.0: For environment variables
-- python-Levenshtein >= 0.20.0: For command suggestions
 
 ### System Requirements
 
-- Python 3.8 or newer
+- Python 3.10 or newer
 - For LDAPS (SSL/TLS) support, OpenSSL libraries may be required
 
 ## Shell Completion
@@ -139,11 +130,12 @@ LDAPie requires the following Python packages, which will be automatically insta
 LDAPie provides shell completion for Bash, Zsh, and Fish:
 
 ```bash
-# Install shell completion
-./ldapie --install-completion
+# Install shell completion for your $SHELL (writes the completion script
+# and, for bash/zsh, adds a setup line to ~/.bashrc or ~/.zshrc)
+ldapie --install-completion
 
-# Show completion script without installing
-./ldapie --show-completion
+# Show the line to add to your shell config instead
+ldapie --show-completion
 ```
 
 ## Usage
@@ -159,15 +151,51 @@ ldapie add <host> <dn> [options]
 ldapie modify <host> <dn> [options]
 ldapie delete <host> <dn> [options]
 ldapie rename <host> <dn> <new_rdn> [options]
+ldapie export <host> <base_dn> [<filter>] --output <file> [options]
+ldapie import <host> <ldif_file> [options]
 ldapie interactive [options]
 ```
+
+Every command that connects accepts the same connection options:
+
+| Option | Meaning |
+|---|---|
+| `-u, --username` | Bind DN (omit for an anonymous bind) |
+| `-p, --password` | Password; prefer `LDAP_PASSWORD` or the prompt |
+| `--ssl / --no-ssl` | Use LDAPS (default port 636) |
+| `--starttls / --no-starttls` | Upgrade to TLS with STARTTLS before binding |
+| `--verify / --no-verify` | Verify the server certificate (default: verify) |
+| `--port` | Port (default: 389, or 636 with `--ssl`) |
+
+Status messages go to stderr, so `--json`, `--ldif` and `--csv` output on
+stdout can be piped (for example into `jq`).
+
+## Configuration File
+
+Defaults for the connection options can live in `~/.config/ldapie/config.yaml`
+(user level) and `./.ldapie.yaml` (project level, read from the current
+directory, takes precedence). Options given on the command line always win.
+
+```yaml
+default_host: ldap.example.com   # used by `ldapie interactive` without --host
+default_username: cn=admin,dc=example,dc=com
+use_ssl: false
+starttls: true
+port: 389
+theme: dark                      # or light; LDAPIE_THEME overrides it
+no_verify: false                 # user-level file only
+```
+
+`no_verify` is ignored in `./.ldapie.yaml`: a project file can come from a
+cloned repository, and it must not be able to turn off certificate checks.
+Unknown keys and values of the wrong type are skipped with a warning.
 
 ## Context-Sensitive Help System
 
 LDAPie includes a comprehensive context-sensitive help system that provides smart suggestions based on your current context and command history:
 
-- **Progressive Help**: Type '?' after any partial command to get context-specific help
-- **Command Validation**: Use the `--validate` flag to check and preview commands without execution
+- **Progressive Help**: In interactive mode, end a partial command with '?' to get context-specific help
+- **Command Validation**: In interactive mode, `validate <command>` checks and previews a command without running it
 - **Smart Suggestions**: Get intelligent recommendations based on your current operation context
 - **"Did you mean...?"**: Get automatic corrections for mistyped commands
 - **History-Aware Help**: Suggestions are informed by your previous commands and operations
@@ -175,14 +203,11 @@ LDAPie includes a comprehensive context-sensitive help system that provides smar
 Examples:
 
 ```bash
-# Get help for a partial command
-./ldapie search?
+# Get help for a partial command (interactive mode)
+ldapie> search ?
 
-# Validate a command without executing it
-./ldapie search ldap.example.com "dc=example,dc=com" --validate
-
-# Get help during interactive mode
-ldapie> search?
+# Validate a command without executing it (interactive mode)
+ldapie> validate search ldap.example.com "dc=example,dc=com"
 ```
 
 ## Usage Examples
@@ -222,6 +247,14 @@ ldapie> search?
 
 # Limit search results
 ./ldapie search ldap.example.com "dc=example,dc=com" --limit 10
+
+# Results are paged (500 entries per page) so server size limits do not
+# truncate them; change the page size or turn paging off
+./ldapie search ldap.example.com "dc=example,dc=com" --page-size 100
+./ldapie search ldap.example.com "dc=example,dc=com" --page-size 0
+
+# Pipe JSON output (status messages go to stderr)
+./ldapie search ldap.example.com "dc=example,dc=com" --json | jq '.[].dn'
 
 # Save results to a file
 ./ldapie search ldap.example.com "dc=example,dc=com" --json --output results.json
@@ -266,11 +299,11 @@ ldapie> search?
 # Add a simple entry
 ./ldapie add ldap.example.com "cn=newuser,ou=people,dc=example,dc=com" --class inetOrgPerson --attr cn=newuser --attr sn=User --attr uid=newuser -u "cn=admin,dc=example,dc=com"
 
-# Add an entry from LDIF file
-./ldapie add ldap.example.com --ldif entries.ldif -u "cn=admin,dc=example,dc=com"
+# Add an entry whose attributes come from an LDIF file with one entry
+./ldapie add ldap.example.com "cn=newuser,ou=people,dc=example,dc=com" --ldif-file newuser.ldif -u "cn=admin,dc=example,dc=com"
 
-# Add an entry from JSON file
-./ldapie add ldap.example.com "cn=newgroup,ou=groups,dc=example,dc=com" --json group.json -u "cn=admin,dc=example,dc=com"
+# Add an entry whose attributes come from a JSON object
+./ldapie add ldap.example.com "cn=newgroup,ou=groups,dc=example,dc=com" --json-file group.json -u "cn=admin,dc=example,dc=com"
 ```
 
 ### Modify LDAP Entry
@@ -287,6 +320,9 @@ ldapie> search?
 
 # Delete an entire attribute
 ./ldapie modify ldap.example.com "cn=user1,ou=people,dc=example,dc=com" --delete mobile -u "cn=admin,dc=example,dc=com"
+
+# Several changes at once; repeated --add values are all added
+./ldapie modify ldap.example.com "cn=user1,ou=people,dc=example,dc=com" --add mail=a@example.com --add mail=b@example.com --replace title=Manager -u "cn=admin,dc=example,dc=com"
 ```
 
 ### Delete LDAP Entry
@@ -295,8 +331,11 @@ ldapie> search?
 # Delete an entry
 ./ldapie delete ldap.example.com "cn=user1,ou=people,dc=example,dc=com" -u "cn=admin,dc=example,dc=com"
 
-# Delete an entry and all its children (recursive)
+# Delete an entry and all its children (asks for confirmation)
 ./ldapie delete ldap.example.com "ou=people,dc=example,dc=com" --recursive -u "cn=admin,dc=example,dc=com"
+
+# Skip the confirmation, e.g. in scripts
+./ldapie delete ldap.example.com "ou=people,dc=example,dc=com" --recursive --yes -u "cn=admin,dc=example,dc=com"
 ```
 
 ### Rename or Move LDAP Entry
@@ -307,7 +346,27 @@ ldapie> search?
 
 # Move an entry to a different location
 ./ldapie rename ldap.example.com "cn=user1,ou=people,dc=example,dc=com" "cn=user1" --parent "ou=admins,dc=example,dc=com" -u "cn=admin,dc=example,dc=com"
+
+# Rename but keep the old RDN value as an attribute value
+./ldapie rename ldap.example.com "cn=user1,ou=people,dc=example,dc=com" "cn=user1renamed" --keep-old-rdn -u "cn=admin,dc=example,dc=com"
 ```
+
+### Export and Import
+
+```bash
+# Export a subtree to LDIF (binary values are base64-encoded)
+./ldapie export ldap.example.com "ou=people,dc=example,dc=com" --output people.ldif -u "cn=admin,dc=example,dc=com"
+
+# Export as JSON
+./ldapie export ldap.example.com "ou=people,dc=example,dc=com" --format json --output people.json
+
+# Import entries from LDIF; every entry is attempted and the command exits
+# with status 1 if any entry could not be added
+./ldapie import ldap.example.com people.ldif -u "cn=admin,dc=example,dc=com"
+```
+
+`import` reads LDIF content records and `changetype: add` records; other
+change types and `:<` URL values are rejected with the offending line number.
 
 ### Interactive Mode
 
@@ -316,7 +375,7 @@ ldapie> search?
 ./ldapie interactive
 
 # Start interactive mode and connect to a server
-./ldapie interactive --host ldap.example.com --user "cn=admin,dc=example,dc=com" --base "dc=example,dc=com"
+./ldapie interactive --host ldap.example.com -u "cn=admin,dc=example,dc=com" --base "dc=example,dc=com"
 
 # Start interactive mode with SSL
 ./ldapie interactive --host ldap.example.com --ssl --base "dc=example,dc=com"
@@ -324,14 +383,14 @@ ldapie> search?
 
 In interactive mode, you can use commands like:
 
-- `connect ldap.example.com 389 admin --ssl` - Connect to server
-- `ls` - List entries in current base DN
-- `cd ou=people,dc=example,dc=com` - Change base DN
+- `connect ldap.example.com 389 cn=admin,dc=example,dc=com --starttls` - Connect to a server
+  (flags: `--ssl`, `--starttls`, `--no-verify`; you are prompted for the password)
+- `base ou=people,dc=example,dc=com` - Set the base DN
 - `search "(objectClass=person)" cn mail` - Search for entries
-- `show 0` - Show first entry from last search
-- `add cn=user,ou=people,dc=example,dc=com person cn=User sn=User` - Add entry
-- `delete cn=user,ou=people,dc=example,dc=com` - Delete entry
-- `help` - Show all available commands
+- `info`, `schema [objectClass]`, `schema --attr name` - Server and schema information
+- `history [search|base|host]` - Show recent filters, base DNs and hosts
+- `search ?` - Context help for a partial command
+- `help` - Show all available commands; `exit`, `quit` or Ctrl-D leaves the shell
 
 ## Password Handling
 
@@ -356,11 +415,12 @@ If you need to provide passwords containing special shell characters on the comm
    ./ldapie search ldap.example.com "dc=example,dc=com" -u "user" -p 'password!with#special@chars'
    ```
 
-2. Use environment variables:
+2. Use the `LDAP_PASSWORD` environment variable; LDAPie reads it when `-p` is not given,
+   so the password does not appear in the process list:
 
    ```bash
-   export LDAP_PASSWORD="password!with#special@chars"
-   ./ldapie search ldap.example.com "dc=example,dc=com" -u "user" -p "$LDAP_PASSWORD"
+   read -rs LDAP_PASSWORD && export LDAP_PASSWORD
+   ./ldapie search ldap.example.com "dc=example,dc=com" -u "user"
    ```
 
 3. Escape special characters:
@@ -381,12 +441,16 @@ If you need to provide passwords containing special shell characters on the comm
 ./ldapie modify --help
 ./ldapie delete --help
 ./ldapie rename --help
+./ldapie export --help
+./ldapie import --help
 ./ldapie interactive --help
 ```
 
 ## Themes
 
-LDAPie supports light and dark themes that can be set through the `--theme` option or environment variable:
+LDAPie supports light and dark themes. Set one with the `--theme` option of `search`,
+the `LDAPIE_THEME` environment variable, or `theme:` in the config file
+(in that order of precedence):
 
 ```bash
 # Set theme using command-line option
@@ -409,13 +473,13 @@ LDAPie is available as a Docker container, making it easy to use without install
 
 ```bash
 # Pull the latest image from Docker Hub
-docker pull ruslanfialkovskii/ldapie:latest
+docker pull ruslanfialkovsky/ldapie:latest
 
 # Run the help command to verify it works
-docker run --rm ruslanfialkovskii/ldapie:latest --help
+docker run --rm ruslanfialkovsky/ldapie:latest --help
 
 # Run the demo to explore LDAPie's features
-docker run --rm ruslanfialkovskii/ldapie:latest --demo
+docker run --rm ruslanfialkovsky/ldapie:latest --demo
 ```
 
 ### Running LDAP Commands with the Container
@@ -424,18 +488,18 @@ The container can be used just like the regular command-line tool:
 
 ```bash
 # Basic LDAP search
-docker run --rm ruslanfialkovskii/ldapie:latest search ldap.example.com "dc=example,dc=com" "(objectClass=*)"
+docker run --rm ruslanfialkovsky/ldapie:latest search ldap.example.com "dc=example,dc=com" "(objectClass=*)"
 
 # Search with authentication
-docker run --rm ruslanfialkovskii/ldapie:latest search ldap.example.com "dc=example,dc=com" \
+docker run --rm ruslanfialkovsky/ldapie:latest search ldap.example.com "dc=example,dc=com" \
   "(objectClass=person)" --username "cn=admin,dc=example,dc=com" --password secret
 
 # Output results in JSON format
-docker run --rm ruslanfialkovskii/ldapie:latest search ldap.example.com "dc=example,dc=com" \
+docker run --rm ruslanfialkovsky/ldapie:latest search ldap.example.com "dc=example,dc=com" \
   "(objectClass=person)" --json
 
 # Get server info
-docker run --rm ruslanfialkovskii/ldapie:latest info ldap.example.com
+docker run --rm ruslanfialkovsky/ldapie:latest info ldap.example.com
 ```
 
 ### Using Interactive Mode with the Container
@@ -443,7 +507,7 @@ docker run --rm ruslanfialkovskii/ldapie:latest info ldap.example.com
 Interactive mode requires some additional Docker parameters:
 
 ```bash
-docker run --rm -it ruslanfialkovskii/ldapie:latest interactive
+docker run --rm -it ruslanfialkovsky/ldapie:latest interactive
 ```
 
 The `-it` flags ensure that Docker allocates a pseudo-TTY and keeps STDIN open, which is necessary for interactive mode to work properly.
@@ -453,9 +517,10 @@ The `-it` flags ensure that Docker allocates a pseudo-TTY and keeps STDIN open, 
 To save output to files or read input files, you'll need to mount a volume:
 
 ```bash
-# Mount the current directory to /data in the container
-docker run --rm -v $(pwd):/data ruslanfialkovskii/ldapie:latest search ldap.example.com \
-  "dc=example,dc=com" "(objectClass=*)" --output /data/results.json --json
+# Mount the current directory to /data in the container. The image runs as a
+# non-root user, so run it with your own user ID to write to the mount.
+docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd)":/data ruslanfialkovsky/ldapie:latest \
+  search ldap.example.com "dc=example,dc=com" "(objectClass=*)" --output /data/results.json --json
 ```
 
 ### Building the Container Locally
@@ -479,12 +544,12 @@ docker run --rm ldapie --help
 The container supports the following environment variables:
 
 - `LDAPIE_THEME`: Set to "light" or "dark" to control the color theme
-- `LDAPIE_DEFAULT_SERVER`: Default LDAP server hostname
+- `LDAP_PASSWORD`: Bind password used when `-p` is not given
 
 Example:
 
 ```bash
-docker run --rm -e LDAPIE_THEME=light ruslanfialkovskii/ldapie:latest --help
+docker run --rm -e LDAPIE_THEME=light ruslanfialkovsky/ldapie:latest --help
 ```
 
 ### Container Tags
@@ -500,11 +565,9 @@ The LDAPie container is lightweight and requires minimal resources. For most ope
 For operations on very large LDAP directories, you may need to increase the memory limit:
 
 ```bash
-docker run --rm --memory=512m ruslanfialkovskii/ldapie:latest search ldap.example.com \
+docker run --rm --memory=512m ruslanfialkovsky/ldapie:latest search ldap.example.com \
   "dc=example,dc=com" "(objectClass=*)" --page-size 1000
 ```
-
-For more detailed information about using LDAPie in containers, see [CONTAINER.md](CONTAINER.md).
 
 ## Development and Contributing
 

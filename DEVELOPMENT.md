@@ -10,13 +10,14 @@ git clone https://github.com/ruslanfialkovskii/ldapie.git
 cd ldapie
 
 # Create a virtual environment
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 
-# Install dependencies and develop mode
-pip install -e .
-pip install pytest pytest-cov black flake8 pylint
+# Install in develop mode with the dev tools (pytest, black, isort, flake8, pylint, mypy)
+pip install -e '.[dev]'
 ```
+
+With [mise](https://mise.jdx.dev), `mise run install` does the same in `.venv`.
 
 ### Running Tests
 
@@ -25,23 +26,30 @@ pip install pytest pytest-cov black flake8 pylint
 pytest tests/
 
 # Run tests with coverage
-pytest --cov=src tests/
+pytest --cov=ldapie tests/
 ```
+
+Tests use an in-memory ldap3 `MOCK_SYNC` server with the OpenLDAP schema
+(fixtures in `tests/conftest.py`), and run with `HOME` and the working
+directory pointed at a temporary directory, so they never touch your real
+history or config files.
 
 ### Code Style
 
 LDAPie follows PEP 8 style guidelines with some adjustments defined in the pyproject.toml file:
 
 ```bash
-# Check code formatting
-black --check src tests
+# Check code formatting and import order (CI fails on these)
+black --check src tests scripts
+isort --check-only --profile black src tests scripts
 
 # Fix code formatting
-black src tests
+isort --profile black src tests scripts
+black src tests scripts
 
-# Run linting
-flake8 src tests
-pylint src tests
+# Run linting (flake8 is blocking in CI, pylint is advisory)
+flake8 src tests scripts
+pylint --rcfile=.pylintrc src/ldapie
 ```
 
 ### Type Checking
@@ -53,8 +61,7 @@ LDAPie uses mypy for static type checking:
 make typecheck
 ```
 
-See [TYPING.md](TYPING.md) for guidance on fixing type errors and adding type annotations.
-```
+`mypy.ini` holds the type-checking configuration; CI fails on mypy errors.
 
 ### Release Process
 
@@ -93,6 +100,9 @@ python scripts/bump_version.py patch
 # Bump minor version with dry run
 python scripts/bump_version.py minor --dry-run
 
+# Set an exact version
+python scripts/bump_version.py patch --set-version 1.0.0
+
 # Bump major version with auto-commit, tag, and push
 python scripts/bump_version.py major --auto-commit --tag --push
 
@@ -105,7 +115,6 @@ For complete details on the release process, see [RELEASE.md](RELEASE.md).
 ### Project Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) - Version history and changes
-- [CONTAINER.md](CONTAINER.md) - Docker container usage
 - [RELEASE.md](RELEASE.md) - Release process details
 - [ROADMAP.md](ROADMAP.md) - Project roadmap and future plans
 
