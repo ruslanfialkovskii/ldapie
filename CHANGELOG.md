@@ -5,7 +5,7 @@ All notable changes to the LDAPie project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.3.0 (2026-10-08)
 
 ### Security
 - `./.ldapie.yaml` (the project-level config file, read from the current directory) could point `ldapie interactive` at a server of its choosing with `default_host` and `default_username`, so a cloned repository could collect the user's `LDAP_PASSWORD`; it could also turn `use_ssl` and `starttls` off over the user config. The project file may now set only `theme`, `use_ssl: true` and `starttls: true`; everything else is ignored with a warning, and a notice on stderr names the keys it contributed.
