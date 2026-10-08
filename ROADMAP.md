@@ -10,14 +10,14 @@ The project has implemented all core features including comprehensive LDAP opera
 
 ```text
 ldapie/
-├── src/                      # Source code
-│   ├── ldapcli.py            # Main CLI application
-│   ├── ldapcli_utils.py      # Utility functions
-│   └── rich_formatter.py     # Custom Rich formatting for CLI help
-├── tests/                    # Tests
-│   ├── demo.py               # Demo script with mock LDAP server
-│   ├── mock_ldap.py          # Mock LDAP server implementation
-│   └── test_ldapcli_utils.py # Tests for utility functions
+├── src/ldapie/               # Package source
+│   ├── ldapie.py             # CLI commands (entry point: ldapie.ldapie:cli)
+│   ├── interactive.py        # Interactive shell
+│   ├── output.py             # Rich, JSON, LDIF, CSV and tree output
+│   ├── ldif_parser.py        # LDIF parser for import
+│   ├── config.py             # Config file loading
+│   └── demo/                 # ldapie --demo: tour and mock LDAP server
+├── tests/                    # pytest suite (mock LDAP fixtures in conftest.py)
 ├── Dockerfile                # Docker container definition
 ├── LICENSE                   # GPL v3 license
 ├── Makefile                  # Build and development tasks
@@ -25,8 +25,8 @@ ldapie/
 ├── ROADMAP.md                # Project roadmap and planning
 ├── completion.zsh            # Shell completion
 ├── ldapie                    # Python wrapper script
-├── requirements.txt          # Python dependencies
-└── setup.py                  # Package installation
+├── pyproject.toml            # Package metadata and dependencies
+└── requirements.txt          # Runtime dependencies (mirrors pyproject.toml)
 ```
 
 ## Implemented Features

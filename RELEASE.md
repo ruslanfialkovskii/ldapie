@@ -12,7 +12,6 @@ LDAPie uses a GitHub Actions workflow to automate the release process. The workf
 - Creating a GitHub release with release notes
 - Publishing to PyPI
 - Building and pushing Docker images for multiple platforms
-- Sending notifications
 
 ## Creating a Release
 
@@ -43,7 +42,6 @@ The release process executes the following jobs:
 4. **Publish to PyPI**: Uploads the package to PyPI
 5. **Build Docker Images**: Creates and publishes multi-architecture Docker images
 6. **Create GitHub Release**: Creates a GitHub release with release notes and artifacts
-7. **Send Notifications**: Notifies team members about the new release via Slack
 
 ## Accessing Releases
 
