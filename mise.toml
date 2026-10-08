@@ -1,0 +1,70 @@
+# Toolchain and task aliases. Most tasks live in the Makefile, so `make` and
+# `mise run` do the same thing; `test:quick` and `release:*` are mise-only.
+
+[tools]
+python = "3.13"
+# Same uv minor as the Dockerfile and CI (setup-uv `version: 0.12.x`)
+uv = "0.12"
+
+[env]
+_.python.venv = { path = ".venv", create = true }
+
+[tasks.install]
+description = "Create .venv from uv.lock with the dev tools"
+run = "make setup"
+
+[tasks.test]
+description = "Run all tests"
+run = "make test"
+
+[tasks."test:quick"]
+description = "Run the fast unit tests (for commits)"
+run = "pytest tests/test_ldapcli_utils.py tests/test_search.py tests/test_ldif.py -q"
+
+[tasks."test:cov"]
+description = "Run tests with coverage"
+run = "make cov"
+
+[tasks.lint]
+description = "Lint and check formatting (what CI checks)"
+run = "make lint format-check"
+
+[tasks.typecheck]
+description = "Run mypy type checking"
+run = "make typecheck"
+
+[tasks.format]
+description = "Sort imports and format code"
+run = "make format"
+
+[tasks.audit]
+description = "Check locked dependencies for known vulnerabilities"
+run = "make audit"
+
+[tasks.demo]
+description = "Run demo with mock LDAP server"
+run = "make demo"
+
+[tasks.build]
+description = "Build sdist and wheel"
+run = "make dist"
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = "make clean"
+
+[tasks."release:check"]
+description = "Dry-run to preview what a release would do"
+run = "python scripts/bump_version.py patch --dry-run"
+
+[tasks."release:patch"]
+description = "Bump patch version locally"
+run = "python scripts/bump_version.py patch"
+
+[tasks."release:minor"]
+description = "Bump minor version locally"
+run = "python scripts/bump_version.py minor"
+
+[tasks."release:major"]
+description = "Bump major version locally"
+run = "python scripts/bump_version.py major"

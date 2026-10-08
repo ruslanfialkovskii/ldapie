@@ -1,0 +1,35 @@
+# Dependabot keeps the pinned versions current:
+# - uv.lock (Python dependencies, including transitive ones such as pyasn1)
+# - the SHA-pinned actions in .github/workflows
+# - the digest-pinned base images in the Dockerfile
+# Version updates wait seven days after a release (cooldown), as a guard
+# against freshly published malicious releases; security updates are not
+# delayed and are opened as soon as an advisory is published.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

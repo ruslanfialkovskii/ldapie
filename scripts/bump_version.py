@@ -174,7 +174,7 @@ def update_changelog(
     content = changelog_path.read_text() if changelog_path.exists() else ""
     unreleased = re.search(r"^#{1,2} Unreleased[ \t]*$", content, re.MULTILINE)
     if unreleased:
-        heading = f"# {new_version} ({today})"
+        heading = f"## {new_version} ({today})"
         if dry_run:
             print(f"Would rename the Unreleased section of CHANGELOG.md to '{heading}'")
             return True
@@ -190,10 +190,10 @@ def update_changelog(
 
     if message:
         # User provided a custom message
-        new_entry = f"# {new_version} ({today})\n\n{message}\n\n"
+        new_entry = f"## {new_version} ({today})\n\n{message}\n\n"
     else:
         # Standard template
-        new_entry = f"# {new_version} ({today})\n\n### Added\n- \n\n### Changed\n- \n\n### Fixed\n- \n\n"
+        new_entry = f"## {new_version} ({today})\n\n### Added\n- \n\n### Changed\n- \n\n### Fixed\n- \n\n"
 
     if dry_run:
         print(f"Would add new entry to CHANGELOG.md for version {new_version}")

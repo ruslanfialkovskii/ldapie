@@ -8,10 +8,11 @@ LdapConfig.get_connection is replaced (see the ``mock_ldap`` fixture).
 """
 
 import json
+import ssl
 
 import pytest
-from ldap3 import AUTO_BIND_TLS_BEFORE_BIND, BASE
-from ldap3.core.exceptions import LDAPNoSuchObjectResult
+from ldap3 import ALL, AUTO_BIND_TLS_BEFORE_BIND, BASE, NONE
+from ldap3.core.exceptions import LDAPException, LDAPNoSuchObjectResult
 
 from ldapie import ldapie as ldapie_module
 from ldapie.ldapie import LdapConfig, cli
@@ -193,6 +194,40 @@ def test_export_ldif_round_trips_binary_values(cli_runner, mock_ldap, tmp_path):
     assert attrs["cn"] == ["pic"]
 
 
+def test_export_json_streams_in_json_dumps_layout(cli_runner, mock_ldap, tmp_path):
+    out = tmp_path / "export.json"
+    result = cli_runner.invoke(
+        cli,
+        [
+            "export",
+            HOST,
+            BASE_DN,
+            "(objectClass=person)",
+            "--format",
+            "json",
+            "--output",
+            str(out),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Exported 2 entries" in result.output
+    text = out.read_text()
+    records = json.loads(text)
+    assert sorted(r["dn"] for r in records) == [JDOE, f"cn=jsmith,ou=people,{BASE_DN}"]
+    # Written entry by entry, but laid out exactly like json.dumps(list, indent=2)
+    assert text == json.dumps(records, indent=2) + "\n"
+
+
+def test_export_without_results_creates_no_file(cli_runner, mock_ldap, tmp_path):
+    out = tmp_path / "none.ldif"
+    result = cli_runner.invoke(
+        cli, ["export", HOST, BASE_DN, "(cn=nobody)", "--output", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "No entries found to export" in result.output
+    assert not out.exists()
+
+
 # --- rename / delete ------------------------------------------------------------
 
 
@@ -329,6 +364,75 @@ def test_anonymous_starttls_runs_before_bind(monkeypatch):
     assert conn.kwargs["auto_bind"] == AUTO_BIND_TLS_BEFORE_BIND
 
 
+def test_tls_uses_sni_ca_bundle_and_timeouts(monkeypatch, tmp_path):
+    recorded = {}
+
+    class Recorder:
+        def __init__(self, *args, **kwargs):
+            recorded[type(self).__name__] = (args, kwargs)
+
+    class Tls(Recorder):
+        pass
+
+    class Server(Recorder):
+        pass
+
+    _FakeConnection.instances = []
+    monkeypatch.setattr(ldapie_module, "Tls", Tls)
+    monkeypatch.setattr(ldapie_module, "Server", Server)
+    monkeypatch.setattr(ldapie_module, "Connection", _FakeConnection)
+    ca = tmp_path / "ca.pem"
+    ca.write_text("cert")
+
+    LdapConfig(host=HOST, use_ssl=True, ca_cert=str(ca), timeout=7).get_connection()
+
+    _, tls_kwargs = recorded["Tls"]
+    assert tls_kwargs == {
+        "validate": ssl.CERT_REQUIRED,
+        "ca_certs_file": str(ca),
+        "sni": HOST,
+    }
+    server_args, server_kwargs = recorded["Server"]
+    assert server_args == (f"ldaps://{HOST}:636",)
+    assert server_kwargs["connect_timeout"] == 7
+    assert server_kwargs["get_info"] == ALL
+    (conn,) = _FakeConnection.instances
+    assert conn.kwargs["receive_timeout"] == 7
+
+
+def test_missing_ca_cert_is_reported_before_connecting():
+    with pytest.raises(FileNotFoundError, match="CA certificate"):
+        LdapConfig(
+            host=HOST, use_ssl=True, ca_cert="/nonexistent/ca.pem"
+        ).get_connection()
+
+
+@pytest.mark.parametrize(
+    "args, expected",
+    [
+        (["modify", HOST, JDOE, "--replace", "description=x"], NONE),
+        (["rename", HOST, JDOE, "cn=johnd"], NONE),
+        (["delete", HOST, JDOE], NONE),
+        (["search", HOST, BASE_DN, "(cn=jdoe)"], ALL),
+        (["export", HOST, BASE_DN, "--output", "out.ldif"], NONE),
+        (["export", HOST, BASE_DN, "--output", "out.json", "--format", "json"], ALL),
+    ],
+)
+def test_schema_is_only_downloaded_when_needed(
+    cli_runner, ldap_server, monkeypatch, args, expected
+):
+    seen = []
+
+    def fake_get_connection(self, get_info=ALL):
+        seen.append(get_info)
+        return ldap_server
+
+    monkeypatch.setattr(LdapConfig, "get_connection", fake_get_connection)
+    result = cli_runner.invoke(cli, args)
+    assert result.exit_code == 0, result.output
+    assert seen == [expected]
+
+
 # --- other read commands ---------------------------------------------------
 
 
@@ -386,6 +490,128 @@ def test_rich_output_escapes_markup_in_values(cli_runner, mock_ldap):
     result = cli_runner.invoke(cli, ["search", HOST, BASE_DN, "(cn=br)"])
     assert result.exit_code == 0, result.output
     assert "[/bold] [red]x" in result.stdout
+
+
+# Clears the screen, then plants an OSC 8 terminal hyperlink
+TERMINAL_PAYLOAD = "x\x1b[2J\x1b]8;;http://evil.example\x1b\\click\x9b31m"
+
+
+def test_output_escapes_terminal_control_characters(cli_runner, mock_ldap):
+    _, conn = mock_ldap
+    conn.strategy.add_entry(
+        f"cn=esc,ou=people,{BASE_DN}",
+        {
+            "objectClass": ["person"],
+            "cn": "esc",
+            "sn": TERMINAL_PAYLOAD,
+            "description": '=HYPERLINK("http://evil.example")',
+        },
+    )
+    search = ["search", HOST, BASE_DN, "(cn=esc)", "-a", "sn", "-a", "description"]
+
+    for fmt in ([], ["--tree"], ["--csv"]):
+        result = cli_runner.invoke(cli, search + fmt)
+        assert result.exit_code == 0, result.output
+        assert "\x1b" not in result.stdout, fmt
+        assert "\x9b" not in result.stdout, fmt
+        assert "\\x1b" in result.stdout, fmt
+
+    result = cli_runner.invoke(cli, search + ["--csv"])
+    assert "'=HYPERLINK" in result.stdout
+
+    # Data formats keep the value intact: JSON escapes it, LDIF base64-encodes it
+    result = cli_runner.invoke(cli, search + ["--json"])
+    assert "\x1b" not in result.stdout
+    assert json.loads(result.stdout)[0]["sn"] == TERMINAL_PAYLOAD
+    result = cli_runner.invoke(cli, search + ["--ldif"])
+    assert "\x1b" not in result.stdout
+    [(_, attrs)] = parse_ldif(result.stdout)
+    # The parser hands control characters back as binary data
+    assert attrs["sn"] == [TERMINAL_PAYLOAD.encode("utf-8")]
+
+
+def test_error_messages_are_sanitized(cli_runner, monkeypatch):
+    """LDAP diagnostic messages are server data and go through safe_text."""
+
+    def boom(self, **kwargs):
+        raise LDAPException("diag: \x1b[2J [link=http://evil.example]x[/link]")
+
+    monkeypatch.setattr(LdapConfig, "get_connection", boom)
+    result = cli_runner.invoke(cli, ["search", HOST, BASE_DN])
+    assert result.exit_code == 1
+    assert "\x1b" not in result.output
+    assert "\\x1b[2J" in result.output
+    assert "[link=http://evil.example]x[/link]" in result.output
+
+
+def test_export_failure_keeps_the_previous_file(
+    cli_runner, mock_ldap, monkeypatch, tmp_path
+):
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    out = out_dir / "backup.ldif"
+    out.write_text("previous export\n")
+    original = ldapie_module.search_utils.iter_paged_search
+
+    def flaky(*args, **kwargs):
+        entries = original(*args, **kwargs)
+        yield next(entries)
+        raise LDAPException("connection lost")
+
+    monkeypatch.setattr(ldapie_module.search_utils, "iter_paged_search", flaky)
+    result = cli_runner.invoke(cli, ["export", HOST, BASE_DN, "--output", str(out)])
+    assert result.exit_code == 1
+    assert "connection lost" in result.output
+    assert out.read_text() == "previous export\n"
+    assert [p.name for p in out_dir.iterdir()] == ["backup.ldif"]
+
+
+def test_negative_limit_is_rejected(cli_runner, mock_ldap):
+    result = cli_runner.invoke(cli, ["search", HOST, BASE_DN, "--limit", "-1"])
+    assert result.exit_code == 2
+
+
+def test_ca_cert_requires_tls(cli_runner, mock_ldap, tmp_path):
+    ca = tmp_path / "ca.pem"
+    ca.write_text("cert")
+    result = cli_runner.invoke(cli, ["search", HOST, BASE_DN, "--ca-cert", str(ca)])
+    assert result.exit_code == 2
+    assert "--ca-cert needs --ssl or --starttls" in result.output
+
+    result = cli_runner.invoke(
+        cli, ["search", HOST, BASE_DN, "--ssl", "--no-verify", "--ca-cert", str(ca)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "CA certificate is not used" in result.output
+
+
+def test_write_commands_work_without_a_schema(
+    cli_runner, ldap_server_no_schema, monkeypatch, tmp_path
+):
+    """The commands that connect with get_info=NONE run against such a server."""
+    seen = []
+
+    def fake_get_connection(self, get_info=ALL):
+        seen.append(get_info)
+        return ldap_server_no_schema
+
+    monkeypatch.setattr(LdapConfig, "get_connection", fake_get_connection)
+    _, conn = ldap_server_no_schema
+    new = f"cn=new,ou=people,{BASE_DN}"
+    out = tmp_path / "out.ldif"
+    for args in (
+        ["add", HOST, new, "-c", "person", "-a", "cn=new", "-a", "sn=N"],
+        ["modify", HOST, new, "--replace", "sn=M"],
+        ["rename", HOST, new, "cn=renamed"],
+        ["export", HOST, BASE_DN, "--output", str(out)],
+        ["delete", HOST, f"ou=people,{BASE_DN}", "--recursive", "--yes"],
+    ):
+        result = cli_runner.invoke(cli, args)
+        assert result.exit_code == 0, (args, result.output)
+    assert set(seen) == {NONE}
+    assert read_entry(conn, f"ou=people,{BASE_DN}") is None
+    records = parse_ldif(out.read_text())
+    assert any(dn == f"cn=renamed,ou=people,{BASE_DN}" for dn, _ in records)
 
 
 def test_demo_runs_end_to_end(monkeypatch, capsys):

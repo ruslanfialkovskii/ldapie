@@ -134,7 +134,10 @@ class TabCompletion:
         """Tab completion for connect command"""
         args = line.split()
         if text.startswith("-"):
-            options = ["--ssl", "--starttls", "--no-verify"]
+            # The parser's option list, so completion never lags behind it
+            from .help_context import CONNECT_FLAGS, CONNECT_VALUE_OPTIONS
+
+            options = [*CONNECT_FLAGS, *CONNECT_VALUE_OPTIONS]
             return [opt for opt in options if opt.startswith(text)]
         if len(args) == 1 and not text:
             # Just entered "connect"

@@ -35,9 +35,10 @@ ENV/
 .mypy_cache/
 .pytest_cache/
 
-# IDE
+# IDE and agent settings
 .idea/
 .vscode/
+.claude/settings.local.json
 *.swp
 *.swo
 
@@ -52,10 +53,9 @@ Thumbs.db
 
 # Application specific
 *.log
-*.ldif
-*.json
-*.csv
 output/
 
 .lock
 .coverage
+# Scratch file of `make audit`
+.requirements-audit.txt

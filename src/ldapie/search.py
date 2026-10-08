@@ -4,13 +4,88 @@
 LDAP search and query related functions for LDAPie.
 """
 
-from typing import Any, List, Optional
+from typing import Any, Iterator, List, Optional
 
 from ldap3 import ALL_ATTRIBUTES, BASE, Connection
 from rich import box
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
+
+from .output import safe_text
+
+PAGED_RESULTS_OID = "1.2.840.113556.1.4.319"
+
+
+def iter_paged_search(
+    conn: Connection,
+    base_dn: str,
+    filter_query: str,
+    search_scope,
+    attributes,
+    page_size: int,
+    limit: Optional[int] = None,
+) -> Iterator[Any]:
+    """
+    Run a paged search and yield the entries page by page.
+
+    Uses the LDAP paged results control, so server size limits do not cut
+    the result short and only one page is held in memory at a time. With a
+    limit, no page is larger than the number of entries still wanted, so
+    ``--limit 5`` downloads 5 entries and not a whole page.
+
+    Args:
+        conn: LDAP connection object
+        base_dn: Search base DN
+        filter_query: LDAP search filter
+        search_scope: Search scope (BASE, LEVEL, SUBTREE)
+        attributes: List of attributes to retrieve or ALL_ATTRIBUTES
+        page_size: Number of entries per page (at least 1)
+        limit: Maximum number of entries to yield (None or 0 for no limit)
+
+    Yields:
+        LDAP entry objects
+    """
+    if page_size < 1:
+        raise ValueError("page_size must be at least 1")
+    if limit is not None and limit < 0:
+        raise ValueError("limit must not be negative")
+    limit = limit or None
+    entry_count = 0
+    cookie = None
+
+    while True:
+        size = page_size if limit is None else min(page_size, limit - entry_count)
+        conn.search(
+            base_dn,
+            filter_query,
+            search_scope=search_scope,
+            attributes=attributes,
+            paged_size=size,
+            paged_cookie=cookie,
+        )
+
+        page = conn.entries
+        entries = page if limit is None else page[: limit - entry_count]
+        entry_count += len(entries)
+        yield from entries
+
+        if limit is not None and entry_count >= limit:
+            return
+
+        # The server returns a cookie while more pages are available. A
+        # server that repeats the same cookie with an empty page makes no
+        # progress; stop instead of looping forever.
+        next_cookie = (
+            (conn.result or {})
+            .get("controls", {})
+            .get(PAGED_RESULTS_OID, {})
+            .get("value", {})
+            .get("cookie")
+        )
+        if not next_cookie or (not page and next_cookie == cookie):
+            return
+        cookie = next_cookie
 
 
 def paged_search(
@@ -23,62 +98,19 @@ def paged_search(
     limit: Optional[int] = None,
 ) -> List[Any]:
     """
-    Perform a paged search and return all entries.
+    Perform a paged search and return all entries as a list.
 
-    Uses the LDAP paged results control to retrieve large result sets in
-    chunks, which is more efficient than fetching all results at once.
-
-    Args:
-        conn: LDAP connection object
-        base_dn: Search base DN
-        filter_query: LDAP search filter
-        search_scope: Search scope (BASE, LEVEL, SUBTREE)
-        attributes: List of attributes to retrieve or ALL_ATTRIBUTES
-        page_size: Number of entries per page
-        limit: Maximum number of entries to return (None for no limit)
-
-    Returns:
-        List of LDAP entry objects
+    See ``iter_paged_search`` for the arguments; this collects what it yields.
 
     Example:
         >>> entries = paged_search(conn, "dc=example,dc=com", "(objectClass=person)",
         ...                        SUBTREE, ["cn", "mail"], 100, 500)
     """
-    entries = []
-    entry_count = 0
-    cookie = None
-
-    while True:
-        conn.search(
-            base_dn,
-            filter_query,
-            search_scope=search_scope,
-            attributes=attributes,
-            paged_size=page_size,
-            paged_cookie=cookie,
+    return list(
+        iter_paged_search(
+            conn, base_dn, filter_query, search_scope, attributes, page_size, limit
         )
-
-        entries.extend(conn.entries)
-        entry_count += len(conn.entries)
-
-        # Check if we've reached the limit
-        if limit and entry_count >= limit:
-            entries = entries[:limit]
-            break
-
-        # Get cookie for next page
-        cookie = (
-            conn.result.get("controls", {})
-            .get("1.2.840.113556.1.4.319", {})
-            .get("value", {})
-            .get("cookie")
-        )
-
-        # If no more pages, exit loop
-        if not cookie:
-            break
-
-    return entries
+    )
 
 
 def compare_entries(
@@ -149,10 +181,11 @@ def compare_entries(
             kind = "missing"
             status = "! Missing in DN 2" if values2 is None else "! Missing in DN 1"
         counts[kind] += 1
+        # Directory data is neither Rich markup nor terminal control codes
         table.add_row(
-            attr,
-            escape("\n".join(values1 or [])),
-            escape("\n".join(values2 or [])),
+            safe_text(attr),
+            safe_text("\n".join(values1 or [])),
+            safe_text("\n".join(values2 or [])),
             status,
         )
 

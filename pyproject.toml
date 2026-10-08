@@ -29,22 +29,29 @@ classifiers = [
 ]
 dependencies = [
     "ldap3>=2.9,<3.0",
+    # ldap3 only asks for pyasn1>=0.4.6. pyasn1 decodes every server response, and
+    # versions before 0.6.4 can be made to hang by a hostile server (CVE-2026-30922,
+    # CVE-2026-59884, CVE-2026-59885, CVE-2026-59886).
+    "pyasn1>=0.6.4",
     "rich>=12.0.0",
     "click>=8.0",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-dev = [
+test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    # Pinned to a major version: black's style changes yearly and CI checks it
-    "black>=26.0,<27",
-    "isort>=5.0",
-    "flake8>=6.0",
-    "pylint>=3.0",
+]
+dev = [
+    "ldapie[test]",
+    # Pinned to a minor version: ruff's formatting style changes between minors and CI checks it
+    "ruff>=0.16,<0.17",
     "mypy>=1.8.0",
     "types-PyYAML>=6.0.0",
+    # Locked here (not fetched with uvx at run time) so CI and releases use reviewed versions
+    "pip-audit>=2.10",
+    "twine>=6",
 ]
 
 [project.urls]
@@ -62,33 +69,20 @@ version = {attr = "ldapie.__version__"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py310']
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
+target-version = "py310"
+src = ["src", "tests", "scripts"]
 
-[tool.isort]
-profile = "black"
-line_length = 88
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
+[tool.ruff.lint]
+# E, F and W replace flake8, I replaces isort, B adds the bugbear checks, and
+# PLE/PLW keep the pylint errors and warnings
+select = ["E", "F", "W", "I", "B", "PLE", "PLW"]
+# Line length is the formatter's job
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ldapie"]
 
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]
@@ -96,3 +90,7 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
+
+[tool.coverage.report]
+# Applies when pytest runs with --cov (CI does); plain pytest stays fast
+fail_under = 75

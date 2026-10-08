@@ -27,7 +27,7 @@ def test_tab_completion_uses_history():
 def test_connect_completion_offers_tls_flags():
     completer = TabCompletion(QueryHistory())
     options = completer.complete_connect("--", "connect host --", 13, 15)
-    assert options == ["--ssl", "--starttls", "--no-verify"]
+    assert options == ["--ssl", "--starttls", "--no-verify", "--ca-cert"]
 
 
 def test_query_history_round_trip_and_permissions(isolated_home):

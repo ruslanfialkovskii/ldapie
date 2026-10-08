@@ -28,8 +28,10 @@ Usage:
     ldapie interactive [options]
 """
 
+import errno
 import functools
 import getpass
+import itertools
 import json as json_lib  # Renamed to avoid conflicts with parameter names
 import os
 import ssl
@@ -47,6 +49,7 @@ from ldap3 import (
     AUTO_BIND_TLS_BEFORE_BIND,
     BASE,
     LEVEL,
+    NONE,
     SUBTREE,
     Connection,
     Server,
@@ -55,7 +58,6 @@ from ldap3 import (
 from ldap3.core.exceptions import LDAPBindError, LDAPException
 from ldap3.core.results import RESULT_SIZE_LIMIT_EXCEEDED
 from rich.console import Console
-from rich.markup import escape
 from rich.theme import Theme
 
 from . import __version__
@@ -66,7 +68,6 @@ from . import schema as schema_utils
 from . import search as search_utils
 from . import utils as general_utils
 from .config import load_config
-from .help_context import HelpContext
 from .ldif_parser import parse_ldif
 from .rich_formatter import add_rich_help_option
 
@@ -101,6 +102,9 @@ LIGHT_THEME = {
 # Page size used when paging is on by default (search, export, recursive delete)
 DEFAULT_PAGE_SIZE = 500
 
+# Seconds to wait for the TCP connection and for each server response
+DEFAULT_TIMEOUT = 30
+
 
 def _theme(name: Optional[str]) -> Theme:
     return Theme(LIGHT_THEME if name == "light" else DARK_THEME)
@@ -133,7 +137,10 @@ class LdapConfig:
         password (Optional[str]): Password for authentication
         use_ssl (bool): Whether to use SSL/TLS
         port (int): LDAP port number
-        timeout (int): Connection timeout in seconds
+        timeout (int): Seconds to wait for the connection and for each response
+        starttls (bool): Whether to upgrade the connection with STARTTLS
+        no_verify (bool): Whether certificate verification is disabled
+        ca_cert (Optional[str]): CA bundle used to verify the server certificate
     """
 
     def __init__(
@@ -143,9 +150,10 @@ class LdapConfig:
         password: Optional[str] = None,
         use_ssl: bool = False,
         port: Optional[int] = None,
-        timeout: int = 30,
+        timeout: Optional[int] = None,
         starttls: bool = False,
         no_verify: bool = False,
+        ca_cert: Optional[str] = None,
     ):
         """
         Initialize LDAP connection configuration.
@@ -156,28 +164,33 @@ class LdapConfig:
             password: Optional password for authentication
             use_ssl: Whether to use SSL/TLS
             port: LDAP port number (default: 389, or 636 with SSL)
-            timeout: Connection timeout in seconds
+            timeout: Seconds to wait for the connection and for each server
+                response (default: DEFAULT_TIMEOUT)
             starttls: Whether to use STARTTLS (upgrade plain to TLS)
             no_verify: Skip TLS certificate verification (insecure)
+            ca_cert: PEM file with the CA certificates that sign the server
+                certificate (default: the system trust store)
         """
         self.host = host
         self.username = username
         self.password = password
         self.use_ssl = use_ssl
         self.port = port or (636 if use_ssl else 389)
-        self.timeout = timeout
+        self.timeout = timeout or DEFAULT_TIMEOUT
         self.starttls = starttls
         self.no_verify = no_verify
+        self.ca_cert = ca_cert
 
     def __repr__(self) -> str:
         # Never include the password: debug output prints this object
         return (
             f"LdapConfig(host={self.host!r}, port={self.port}, "
             f"username={self.username!r}, use_ssl={self.use_ssl}, "
-            f"starttls={self.starttls}, no_verify={self.no_verify})"
+            f"starttls={self.starttls}, no_verify={self.no_verify}, "
+            f"ca_cert={self.ca_cert!r}, timeout={self.timeout})"
         )
 
-    def get_connection(self) -> Tuple[Server, Connection]:
+    def get_connection(self, get_info: str = ALL) -> Tuple[Server, Connection]:
         """
         Create an LDAP server connection based on configuration.
 
@@ -188,6 +201,13 @@ class LdapConfig:
         With STARTTLS the connection is upgraded to TLS before the bind, so
         credentials never travel in clear text.
 
+        Args:
+            get_info: What to read from the server after the bind, one of the
+                ldap3 constants. ``ALL`` (root DSE and schema) is needed to
+                show server information, browse the schema and format
+                attribute values; ``NONE`` skips the schema download for
+                commands that do not need it.
+
         Returns:
             Tuple containing:
                 - Server object
@@ -196,6 +216,7 @@ class LdapConfig:
         Raises:
             LDAPBindError: If authentication fails
             LDAPException: For other LDAP-related errors
+            FileNotFoundError: If ``ca_cert`` does not exist
 
         Example:
             >>> server, conn = config.get_connection()
@@ -203,16 +224,24 @@ class LdapConfig:
         # Configure TLS if SSL or STARTTLS is enabled
         tls_config = None
         if self.use_ssl or self.starttls:
+            if self.ca_cert and not os.path.isfile(self.ca_cert):
+                raise FileNotFoundError(
+                    errno.ENOENT, "CA certificate file not found", self.ca_cert
+                )
             validate = ssl.CERT_NONE if self.no_verify else ssl.CERT_REQUIRED
             if self.no_verify:
                 err_console.print(
                     "[warning]Warning: TLS certificate verification is disabled.[/warning]"
                 )
-            tls_config = Tls(validate=validate)
+            # sni: servers that host several names only present the right
+            # certificate when the client names the host it wants
+            tls_config = Tls(
+                validate=validate, ca_certs_file=self.ca_cert, sni=self.host
+            )
 
         server_uri = f"{'ldaps' if self.use_ssl else 'ldap'}://{self.host}:{self.port}"
         server = Server(
-            server_uri, get_info=ALL, connect_timeout=self.timeout, tls=tls_config
+            server_uri, get_info=get_info, connect_timeout=self.timeout, tls=tls_config
         )
 
         auto_bind = (
@@ -239,10 +268,16 @@ class LdapConfig:
                 password=self.password,
                 auto_bind=auto_bind,
                 raise_exceptions=True,
+                receive_timeout=self.timeout,
             )
         else:
             # Anonymous binding
-            conn = Connection(server, auto_bind=auto_bind, raise_exceptions=True)
+            conn = Connection(
+                server,
+                auto_bind=auto_bind,
+                raise_exceptions=True,
+                receive_timeout=self.timeout,
+            )
 
         return server, conn
 
@@ -292,9 +327,6 @@ def handle_connection_error(func):
         if ctx and isinstance(ctx.obj, dict):
             is_debug = ctx.obj.get("DEBUG", False)
 
-        command_str = func.__name__.replace("_command", "")
-        help_context = HelpContext()
-
         try:
             if is_debug:
                 err_console.print(
@@ -323,14 +355,14 @@ def handle_connection_error(func):
             OSError,
         ) as e:
             error_msg = _format_error(e, _ERROR_MESSAGES)
-        except Exception as e:  # pylint: disable=broad-except
+        except Exception as e:
             error_msg = f"Unexpected error: {e}"
 
-        err_console.print(f"[error]{error_msg}[/error]")
+        # The server's diagnostic message is part of the exception text
+        err_console.print(f"[error]{output_utils.safe_text(error_msg)}[/error]")
         if is_debug:
             err_console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
             err_console.print(traceback.format_exc())
-        help_context.add_error(command_str, error_msg)
         sys.exit(1)
 
     return wrapper
@@ -356,7 +388,20 @@ _CONNECTION_OPTIONS = [
         default=True,
         help="Verify TLS certificates (--no-verify is insecure)",
     ),
+    click.option(
+        "--ca-cert",
+        "ca_cert",
+        type=click.Path(exists=True, dir_okay=False),
+        help="PEM file with the CA certificates that sign the server certificate "
+        "(default: the system trust store)",
+    ),
     click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)"),
+    click.option(
+        "--timeout",
+        type=click.IntRange(min=1),
+        help="Seconds to wait for the connection and for each server response "
+        f"(default: {DEFAULT_TIMEOUT})",
+    ),
 ]
 
 
@@ -379,7 +424,9 @@ def connection_options(func):
                 "use_ssl",
                 "starttls",
                 "verify",
+                "ca_cert",
                 "port",
+                "timeout",
             )
         }
         file_config = (ctx.find_root().obj or {}).get("config", {})
@@ -395,11 +442,25 @@ def connection_options(func):
         use_config("use_ssl", "use_ssl")
         use_config("starttls", "starttls")
         use_config("verify", "no_verify", lambda no_verify: not no_verify)
+        use_config("ca_cert", "ca_cert", os.path.expanduser)
         use_config("port", "port")
+        use_config("timeout", "timeout")
 
         host = kwargs.get("host") or file_config.get("default_host")
         if "host" in kwargs:
             kwargs["host"] = host
+
+        # A CA bundle only matters for a TLS connection: refuse one given on the
+        # command line for a plain connection (a config-file default is just
+        # unused), and say so when --no-verify makes it pointless.
+        if settings["ca_cert"] and not (settings["use_ssl"] or settings["starttls"]):
+            if ctx.get_parameter_source("ca_cert") == ParameterSource.COMMANDLINE:
+                raise click.UsageError("--ca-cert needs --ssl or --starttls")
+        elif settings["ca_cert"] and not settings["verify"]:
+            err_console.print(
+                "[warning]Warning: --no-verify is set, so the CA certificate "
+                "is not used.[/warning]"
+            )
 
         _warn_if_password_on_cli(settings["password"])
         kwargs["ldap_config"] = (
@@ -409,8 +470,10 @@ def connection_options(func):
                 password=settings["password"],
                 use_ssl=settings["use_ssl"],
                 port=settings["port"],
+                timeout=settings["timeout"],
                 starttls=settings["starttls"],
                 no_verify=not settings["verify"],
+                ca_cert=settings["ca_cert"],
             )
             if host
             else None
@@ -546,10 +609,14 @@ def cli(ctx, install_completion=False, show_completion=False, demo=False, debug=
     """LDAPie - A modern LDAP client"""
     ctx.ensure_object(dict)
     ctx.obj["DEBUG"] = debug
+    # Messages quote keys from the files, which may come from a cloned repository
     ctx.obj["config"] = load_config(
         warn=lambda message: err_console.print(
-            f"[warning]Config: {escape(message)}[/warning]"
-        )
+            f"[warning]Config: {output_utils.safe_text(message)}[/warning]"
+        ),
+        notice=lambda message: err_console.print(
+            f"[info]Config: {output_utils.safe_text(message)}[/info]"
+        ),
     )
 
     theme = ctx.obj["config"].get("theme")
@@ -597,7 +664,9 @@ def cli(ctx, install_completion=False, show_completion=False, demo=False, debug=
     default="sub",
     help="Search scope",
 )
-@click.option("--limit", type=int, help="Maximum number of entries to return")
+@click.option(
+    "--limit", type=click.IntRange(min=0), help="Maximum number of entries to return"
+)
 @click.option(
     "--page-size",
     type=click.IntRange(min=0),
@@ -670,11 +739,6 @@ def search_command(
     if len(entries) == 0:
         err_console.print("[warning]No entries found.[/warning]")
         return
-
-    help_context = HelpContext()
-    help_context.current_context["base_dn"] = base_dn
-    help_context.current_context["filter"] = filter_query
-    help_context.current_context["attributes"] = attributes
 
     err_console.print(f"[success]Found {len(entries)} entries.[/success]")
 
@@ -810,12 +874,14 @@ def add_command(host, dn, ldap_config, object_class, attr, ldif_file, json_file)
             sys.exit(1)
         add_values(name, value)
 
-    server, conn = ldap_config.get_connection()
+    server, conn = ldap_config.get_connection(get_info=NONE)
 
     if conn.add(dn, attributes=attributes):
         console.print(f"[success]Successfully added entry: {dn}[/success]")
     else:
-        err_console.print(f"[error]Failed to add entry: {conn.result}[/error]")
+        err_console.print(
+            f"[error]Failed to add entry: {output_utils.safe_text(str(conn.result))}[/error]"
+        )
         sys.exit(1)
 
 
@@ -842,12 +908,14 @@ def delete_command(host, dn, ldap_config, recursive, yes):
             err=True,
         )
 
-    server, conn = ldap_config.get_connection()
+    server, conn = ldap_config.get_connection(get_info=NONE)
 
     try:
         count = entry_utils.delete_entry(conn, dn, recursive=recursive)
     except RuntimeError as e:
-        err_console.print(f"[error]Failed to delete entry: {e}[/error]")
+        err_console.print(
+            f"[error]Failed to delete entry: {output_utils.safe_text(str(e))}[/error]"
+        )
         sys.exit(1)
     suffix = f" ({count} entries)" if recursive else ""
     console.print(f"[success]Successfully deleted entry: {dn}{suffix}[/success]")
@@ -889,12 +957,14 @@ def modify_command(host, dn, ldap_config, add, replace, delete, file):
         err_console.print("[error]No changes specified.[/error]")
         sys.exit(1)
 
-    server, conn = ldap_config.get_connection()
+    server, conn = ldap_config.get_connection(get_info=NONE)
 
     if conn.modify(dn, changes):
         console.print(f"[success]Successfully modified entry: {dn}[/success]")
     else:
-        err_console.print(f"[error]Failed to modify entry: {conn.result}[/error]")
+        err_console.print(
+            f"[error]Failed to modify entry: {output_utils.safe_text(str(conn.result))}[/error]"
+        )
         sys.exit(1)
 
 
@@ -916,12 +986,14 @@ def rename_command(host, dn, new_rdn, ldap_config, delete_old_rdn, parent):
     """Rename or move an LDAP entry"""
     _validate_dn_or_exit(dn)
 
-    server, conn = ldap_config.get_connection()
+    server, conn = ldap_config.get_connection(get_info=NONE)
 
     if conn.modify_dn(dn, new_rdn, delete_old_dn=delete_old_rdn, new_superior=parent):
         console.print("[success]Successfully renamed entry[/success]")
     else:
-        err_console.print(f"[error]Failed to rename entry: {conn.result}[/error]")
+        err_console.print(
+            f"[error]Failed to rename entry: {output_utils.safe_text(str(conn.result))}[/error]"
+        )
         sys.exit(1)
 
 
@@ -958,27 +1030,42 @@ def interactive_command(host, ldap_config, base):
 @add_rich_help_option
 @handle_connection_error
 def export_command(host, base_dn, filter_query, ldap_config, output_file, fmt):
-    """Export LDAP entries to a file"""
+    """Export LDAP entries to a file
+
+    Entries are written as they arrive, page by page, so the export does not
+    hold the whole directory in memory.
+    """
     _validate_filter_or_exit(filter_query)
 
-    server, conn = ldap_config.get_connection()
-    entries = search_utils.paged_search(
+    # LDIF is written from the raw values and needs no schema for formatting
+    server, conn = ldap_config.get_connection(get_info=ALL if fmt == "json" else NONE)
+    entries = search_utils.iter_paged_search(
         conn, base_dn, filter_query, SUBTREE, ALL_ATTRIBUTES, DEFAULT_PAGE_SIZE
     )
-    _warn_if_truncated(conn, len(entries), None)
 
-    if not entries:
+    # Look at the first entry before creating the file, so an empty result
+    # leaves no file behind
+    first = next(entries, None)
+    if first is None:
+        _warn_if_truncated(conn, 0, None)
         err_console.print("[warning]No entries found to export.[/warning]")
         return
 
-    if fmt == "json":
-        output_utils.output_json(entries, output_file)
-    else:
-        output_utils.output_ldif(entries, output_file)
+    count = 0
 
-    console.print(
-        f"[success]Exported {len(entries)} entries to {output_file}[/success]"
-    )
+    def counted():
+        nonlocal count
+        for entry in itertools.chain([first], entries):
+            count += 1
+            yield entry
+
+    if fmt == "json":
+        output_utils.output_json(counted(), output_file)
+    else:
+        output_utils.output_ldif(counted(), output_file)
+    _warn_if_truncated(conn, count, None)
+
+    console.print(f"[success]Exported {count} entries to {output_file}[/success]")
 
 
 @cli.command("import")
@@ -999,7 +1086,7 @@ def import_command(host, ldif_file, ldap_config):
         err_console.print("[warning]No entries found in LDIF file.[/warning]")
         return
 
-    server, conn = ldap_config.get_connection()
+    server, conn = ldap_config.get_connection(get_info=NONE)
 
     success_count = 0
     error_count = 0
@@ -1008,10 +1095,16 @@ def import_command(host, ldif_file, ldap_config):
             added = conn.add(dn, attributes=attributes)
         except LDAPException as e:
             added = False
-            err_console.print(f"[error]Failed to add {dn}: {e}[/error]")
+            err_console.print(
+                f"[error]Failed to add {output_utils.safe_text(dn)}: "
+                f"{output_utils.safe_text(str(e))}[/error]"
+            )
         else:
             if not added:
-                err_console.print(f"[error]Failed to add {dn}: {conn.result}[/error]")
+                err_console.print(
+                    f"[error]Failed to add {output_utils.safe_text(dn)}: "
+                    f"{output_utils.safe_text(str(conn.result))}[/error]"
+                )
         if added:
             success_count += 1
         else:

@@ -2,14 +2,25 @@
 # -*- coding: utf-8 -*-
 """
 Output formatting functions (JSON, LDIF, CSV, etc.) for LDAPie.
+
+Directory data is untrusted: values are escaped before Rich renders them and
+control characters are made visible before anything reaches the terminal.
+Files are written atomically, so a failed streamed export never leaves a
+truncated file behind or destroys the previous one.
 """
 
 import base64
+import contextlib
 import csv
+import itertools
 import json
+import os
+import re
+import sys
+import tempfile
 from datetime import date, datetime
 from io import StringIO
-from typing import Any, Iterable, Iterator, List, Optional
+from typing import IO, Any, Dict, Iterable, Iterator, List, Optional
 
 from ldap3.utils.dn import parse_dn
 from rich import box
@@ -20,6 +31,68 @@ from rich.table import Table
 from rich.tree import Tree
 
 LDIF_LINE_WIDTH = 76
+
+# C0 controls (except newline and tab), DEL and the C1 controls; terminals
+# act on ESC (0x1b) and on C1 codes such as CSI (0x9b)
+_CONTROL_CHARS = {
+    code: f"\\x{code:02x}"
+    for code in itertools.chain(range(0x20), (0x7F,), range(0x80, 0xA0))
+    if chr(code) not in "\n\t"
+}
+
+# Cells starting with these characters are formulas to spreadsheet programs
+# (OWASP list; a leading CR cannot occur because sanitize_text rewrites it)
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t")
+
+# An LDIF attribute description: a name or a numeric OID, with options (RFC 4512)
+_LDIF_ATTRIBUTE_NAME = re.compile(
+    r"^(?:[A-Za-z][A-Za-z0-9-]*|[0-9]+(?:\.[0-9]+)*)(?:;[A-Za-z0-9-]+)*$"
+)
+
+
+def sanitize_text(text: str) -> str:
+    """Make text from the directory safe to print: control characters become
+    ``\\xNN`` escapes, so a value cannot clear the screen, move the cursor or
+    plant a terminal hyperlink. Newlines and tabs are kept."""
+    return text.translate(_CONTROL_CHARS)
+
+
+def safe_text(text: str) -> str:
+    """Sanitize server data and escape it for Rich markup, in that order.
+
+    Use this for everything that came from the server or a file and goes
+    through ``console.print``: values, names, DNs and error messages.
+    """
+    return escape(sanitize_text(text))
+
+
+@contextlib.contextmanager
+def _atomic_write(path: str, newline: Optional[str] = None) -> Iterator[IO[str]]:
+    """Write ``path`` through a temporary file in the same directory.
+
+    The file is renamed into place only when the block completes, so a
+    failure part-way (a dropped connection during a streamed export) leaves
+    the previous file untouched and no partial file behind. The file is
+    created readable by its owner only: exports can hold password hashes.
+    """
+    target = os.path.abspath(path)
+    handle = tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        newline=newline,
+        dir=os.path.dirname(target),
+        prefix=f".{os.path.basename(target)}.",
+        suffix=".part",
+        delete=False,
+    )
+    try:
+        with handle:
+            yield handle
+        os.replace(handle.name, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(handle.name)
+        raise
 
 
 def _json_default(value: Any) -> str:
@@ -35,7 +108,14 @@ def _text_value(value: Any) -> str:
     """Render one attribute value as plain text for tables and CSV."""
     if isinstance(value, bytes):
         return _json_default(value)
-    return str(value)
+    return sanitize_text(str(value))
+
+
+def _csv_value(text: str) -> str:
+    """Keep spreadsheet programs from running a value as a formula."""
+    if text.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + text
+    return text
 
 
 def _ldif_needs_base64(value: str) -> bool:
@@ -76,26 +156,58 @@ def ldif_lines(entries: Iterable[Any]) -> Iterator[str]:
     """Yield RFC 2849 LDIF lines for entries, using the raw attribute values.
 
     Raw values keep binary data and server-side syntax (timestamps, SIDs)
-    intact, so the output can be imported again.
+    intact, so the output can be imported again. An attribute whose name is
+    not a valid attribute description cannot be written in LDIF (names are
+    never encoded); it is skipped with a comment line that names it.
     """
     yield "version: 1"
     for entry in entries:
         yield ""
         yield from _fold(_ldif_line("dn", entry.entry_dn.encode("utf-8")))
         for attr_name in sorted(entry.entry_attributes):
+            if not _LDIF_ATTRIBUTE_NAME.match(attr_name):
+                shown = attr_name.encode("unicode_escape").decode("ascii")
+                yield f"# skipped attribute with an invalid name: {shown}"
+                continue
             for raw in entry[attr_name].raw_values:
                 yield from _fold(_ldif_line(attr_name, raw))
 
 
-def output_json(entries: List[Any], output_file: Optional[str] = None) -> None:
+def json_records(entries: Iterable[Any]) -> Iterator[Dict[str, Any]]:
+    """Yield one JSON-ready dict per entry: the DN and the formatted values."""
+    for entry in entries:
+        record: Dict[str, Any] = {"dn": entry.entry_dn}
+        for attr_name in entry.entry_attributes:
+            values = entry[attr_name].values
+            record[attr_name] = values[0] if len(values) == 1 else list(values)
+        yield record
+
+
+def _write_json(records: Iterable[Dict[str, Any]], out: IO[str]) -> None:
+    """Write records as one JSON array without holding them all in memory.
+
+    The layout matches ``json.dumps(list, indent=2)``.
+    """
+    out.write("[")
+    first = True
+    for record in records:
+        out.write("\n" if first else ",\n")
+        first = False
+        text = json.dumps(record, indent=2, default=_json_default)
+        out.write("  " + text.replace("\n", "\n  "))
+    out.write("]\n" if first else "\n]\n")
+
+
+def output_json(entries: Iterable[Any], output_file: Optional[str] = None) -> None:
     """
     Output LDAP entries as JSON.
 
     Converts LDAP entry objects to JSON-compatible format and outputs them
-    either to stdout or to a file.
+    either to stdout or to a file. Entries are written as they come, so an
+    iterator can stream a large export.
 
     Args:
-        entries: List of LDAP entry objects
+        entries: LDAP entry objects
         output_file: Optional path to save output to a file. If None, prints to stdout.
 
     Returns:
@@ -105,32 +217,24 @@ def output_json(entries: List[Any], output_file: Optional[str] = None) -> None:
         >>> output_json(entries, "output.json")
         >>> output_json(entries)  # Prints to stdout
     """
-    json_entries = []
-    for entry in entries:
-        entry_dict: dict = {"dn": entry.entry_dn}
-        for attr_name in entry.entry_attributes:
-            values = entry[attr_name].values
-            entry_dict[attr_name] = values[0] if len(values) == 1 else list(values)
-        json_entries.append(entry_dict)
-
-    json_str = json.dumps(json_entries, indent=2, default=_json_default)
-
+    records = json_records(entries)
     if output_file:
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(json_str)
+        with _atomic_write(output_file) as f:
+            _write_json(records, f)
     else:
-        print(json_str)
+        _write_json(records, sys.stdout)
 
 
-def output_ldif(entries: List[Any], output_file: Optional[str] = None) -> None:
+def output_ldif(entries: Iterable[Any], output_file: Optional[str] = None) -> None:
     """
     Output LDAP entries as LDIF.
 
     Formats LDAP entries according to the LDAP Data Interchange Format (LDIF)
-    and outputs them either to stdout or to a file.
+    and outputs them either to stdout or to a file. Entries are written as
+    they come, so an iterator can stream a large export.
 
     Args:
-        entries: List of LDAP entry objects
+        entries: LDAP entry objects
         output_file: Optional path to save output to a file. If None, prints to stdout.
 
     Returns:
@@ -144,13 +248,14 @@ def output_ldif(entries: List[Any], output_file: Optional[str] = None) -> None:
         Values that are binary or not plain ASCII text are base64-encoded,
         and long lines are folded, as RFC 2849 specifies.
     """
-    ldif_text = "\n".join(ldif_lines(entries)) + "\n"
-
+    lines = ldif_lines(entries)
     if output_file:
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(ldif_text)
+        with _atomic_write(output_file) as f:
+            for line in lines:
+                f.write(line + "\n")
     else:
-        print(ldif_text, end="")
+        for line in lines:
+            sys.stdout.write(line + "\n")
 
 
 def output_csv(entries: List[Any], output_file: Optional[str] = None) -> None:
@@ -173,17 +278,21 @@ def output_csv(entries: List[Any], output_file: Optional[str] = None) -> None:
 
     Note:
         Multi-valued attributes are joined with semicolons in the CSV output.
+        Cells that a spreadsheet would run as a formula (starting with ``=``,
+        ``+``, ``-``, ``@`` or a tab) get a leading apostrophe; header cells
+        (attribute names) are guarded the same way.
     """
     if not entries:
         return
 
-    # Collect all attribute names from all entries
+    # Collect all attribute names from all entries; the header is server data too
     attr_names = {"dn"}
     for entry in entries:
         attr_names.update(entry.entry_attributes)
+    column = {name: _csv_value(sanitize_text(name)) for name in attr_names}
 
-    # Sort attribute names for consistent output
-    fieldnames = sorted(attr_names)
+    # Sort column names for consistent output
+    fieldnames = sorted(set(column.values()))
 
     # Create CSV output
     output = StringIO()
@@ -191,17 +300,18 @@ def output_csv(entries: List[Any], output_file: Optional[str] = None) -> None:
     writer.writeheader()
 
     for entry in entries:
-        row = {"dn": entry.entry_dn}
+        row = {column["dn"]: _csv_value(sanitize_text(entry.entry_dn))}
         for attr in entry.entry_attributes:
             # Join multiple values with a semicolon
-            row[attr] = ";".join(_text_value(v) for v in entry[attr].values)
+            values = ";".join(_text_value(v) for v in entry[attr].values)
+            row[column[attr]] = _csv_value(values)
 
         writer.writerow(row)
 
     csv_text = output.getvalue()
 
     if output_file:
-        with open(output_file, "w", encoding="utf-8", newline="") as f:
+        with _atomic_write(output_file, newline="") as f:
             f.write(csv_text)
     else:
         print(csv_text)
@@ -245,14 +355,15 @@ def build_tree(entries: List[Any], base_dn: str) -> Tree:
 
         # Attach to the base when the parent was not part of the results
         parent_node = tree_nodes.get(",".join(parts[1:]), root_tree)
-        entry_node = parent_node.add(f"[yellow]{escape(parts[0])}[/yellow]")
+        entry_node = parent_node.add(f"[yellow]{safe_text(parts[0])}[/yellow]")
 
         for attr_name in sorted(entry.entry_attributes):
+            name = safe_text(attr_name)
             values = [escape(_text_value(v)) for v in entry[attr_name].values]
             if len(values) == 1:
-                entry_node.add(f"[cyan]{attr_name}:[/cyan] [green]{values[0]}[/green]")
+                entry_node.add(f"[cyan]{name}:[/cyan] [green]{values[0]}[/green]")
             else:
-                attr_node = entry_node.add(f"[cyan]{attr_name}:[/cyan]")
+                attr_node = entry_node.add(f"[cyan]{name}:[/cyan]")
                 for value in values:
                     attr_node.add(f"[green]{value}[/green]")
 
@@ -289,7 +400,7 @@ def output_tree(
     tree = build_tree(entries, base_dn)
 
     if output_file:
-        with open(output_file, "w", encoding="utf-8") as f:
+        with _atomic_write(output_file) as f:
             Console(file=f, highlight=False).print(tree)
     else:
         console.print(tree)
@@ -317,7 +428,7 @@ def output_rich(
         >>> output_rich(entries, console, "output.txt")
     """
     if output_file:
-        with open(output_file, "w", encoding="utf-8") as f_out:
+        with _atomic_write(output_file) as f_out:
             _print_entries(entries, Console(file=f_out, highlight=False))
     else:
         _print_entries(entries, console)
@@ -333,11 +444,11 @@ def _print_entries(entries: List[Any], console: Console) -> None:
         for attr_name in sorted(entry.entry_attributes):
             # LDAP data is not Rich markup; escape it so brackets print as-is
             values = (escape(_text_value(v)) for v in entry[attr_name].values)
-            table.add_row(attr_name, "\n".join(values))
+            table.add_row(safe_text(attr_name), "\n".join(values))
 
         panel = Panel(
             table,
-            title=f"[yellow]{escape(entry.entry_dn)}[/yellow]",
+            title=f"[yellow]{safe_text(entry.entry_dn)}[/yellow]",
             title_align="left",
             border_style="blue",
         )
