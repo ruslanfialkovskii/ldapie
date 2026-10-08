@@ -9,7 +9,14 @@ for the LDAPie interactive shell.
 
 import json
 import os
-import readline
+from types import ModuleType
+from typing import Dict, List, Optional
+
+readline: Optional[ModuleType]
+try:
+    import readline
+except ImportError:  # e.g. Windows without pyreadline
+    readline = None
 
 
 class QueryHistory:
@@ -22,7 +29,7 @@ class QueryHistory:
 
     def __init__(self):
         """Initialize query history"""
-        self.history = {
+        self.history: Dict[str, List[str]] = {
             "search": [],  # search filters
             "base": [],  # base DNs
             "host": [],  # hostnames
@@ -80,21 +87,27 @@ class QueryHistory:
         return self.history
 
     def save_history(self):
-        """Save history to file"""
+        """Save history to file, readable by the owner only"""
         try:
-            with open(self.history_file, "w") as f:
+            fd = os.open(
+                self.history_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self.history, f)
             os.chmod(self.history_file, 0o600)
-        except (IOError, PermissionError) as e:
+        except OSError as e:
             print(f"Warning: Could not save query history: {e}")
 
     def load_history(self):
         """Load history from file"""
         try:
             if os.path.exists(self.history_file):
-                with open(self.history_file, "r") as f:
-                    self.history.update(json.load(f))
-        except (IOError, json.JSONDecodeError, PermissionError) as e:
+                with open(self.history_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for key in self.history:
+                    if isinstance(data.get(key), list):
+                        self.history[key] = [str(v) for v in data[key]]
+        except (OSError, ValueError, AttributeError) as e:
             print(f"Warning: Could not load query history: {e}")
 
 
@@ -110,21 +123,19 @@ class TabCompletion:
         args = line.split()
         if len(args) == 1 and not text:
             # Just entered "search"
-            return ["(objectClass=*)", "(cn=*)", "(uid=*)", "--help"]
+            return ["(objectClass=*)", "(cn=*)", "(uid=*)"]
         elif len(args) == 2 or (len(args) == 1 and text):
             # Second argument - filter
             return self.get_search_filters_completion(text)
-        else:
-            # Attributes or options
-            if text.startswith("-"):
-                # Options
-                options = ["-a", "--tree", "--json", "--ldif", "--csv"]
-                return [opt for opt in options if opt.startswith(text)]
-            return []
+        # Remaining arguments are attribute names
+        return []
 
     def complete_connect(self, text, line, begidx, endidx):
         """Tab completion for connect command"""
         args = line.split()
+        if text.startswith("-"):
+            options = ["--ssl", "--starttls", "--no-verify"]
+            return [opt for opt in options if opt.startswith(text)]
         if len(args) == 1 and not text:
             # Just entered "connect"
             return self.get_hosts_completion("")
@@ -133,14 +144,7 @@ class TabCompletion:
             return self.get_hosts_completion(text)
         elif len(args) == 3 or (len(args) == 2 and text):
             # Third argument - port
-            if text.startswith("-"):
-                return ["--ssl"] if "--ssl".startswith(text) else []
             return ["389", "636"] if not text else []
-        elif len(args) >= 4:
-            # Options and username
-            if text.startswith("-"):
-                options = ["--ssl"]
-                return [opt for opt in options if opt.startswith(text)]
         return []
 
     def complete_base(self, text, line, begidx, endidx):
@@ -167,6 +171,8 @@ class TabCompletion:
 
     def complete(self, text, state):
         """Main completion method for readline"""
+        if readline is None:
+            return None
         if state == 0:
             # This is the first time for this text, so build a match list
             line = readline.get_line_buffer()

@@ -9,6 +9,7 @@ from typing import Any, List, Optional
 from ldap3 import ALL_ATTRIBUTES, BASE, Connection
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 
@@ -110,99 +111,60 @@ def compare_entries(
     # Search for first entry
     conn.search(dn1, "(objectClass=*)", search_scope=BASE, attributes=attributes)
     if not conn.entries:
-        console.print(f"[red]Entry not found: {dn1}[/red]")
+        console.print(f"[red]Entry not found: {escape(dn1)}[/red]")
         return
     entry1 = conn.entries[0]
 
     # Search for second entry
     conn.search(dn2, "(objectClass=*)", search_scope=BASE, attributes=attributes)
     if not conn.entries:
-        console.print(f"[red]Entry not found: {dn2}[/red]")
+        console.print(f"[red]Entry not found: {escape(dn2)}[/red]")
         return
     entry2 = conn.entries[0]
 
-    # Get all attributes to compare
-    attr_set = set(entry1.entry_attributes).union(set(entry2.entry_attributes))
+    # Get all attributes to compare (attribute names are case-insensitive)
+    attr_set = set(entry1.entry_attributes).union(entry2.entry_attributes)
     if attrs:
-        attr_set = attr_set.intersection(set(attrs))
+        wanted = {a.lower() for a in attrs}
+        attr_set = {a for a in attr_set if a.lower() in wanted}
 
-    # Create comparison table
     table = Table(title="Entry Comparison", box=box.ROUNDED, show_header=True)
     table.add_column("Attribute", style="cyan")
-    table.add_column(f"DN 1: {dn1}", style="green")
-    table.add_column(f"DN 2: {dn2}", style="green")
+    table.add_column(f"DN 1: {escape(dn1)}", style="green")
+    table.add_column(f"DN 2: {escape(dn2)}", style="green")
     table.add_column("Status", style="yellow")
 
-    # Compare each attribute
-    equal_count = 0
-    diff_count = 0
-    missing_count = 0
-
+    counts = {"equal": 0, "different": 0, "missing": 0}
     for attr in sorted(attr_set):
-        has_attr1 = attr in entry1.entry_attributes
-        has_attr2 = attr in entry2.entry_attributes
+        values1 = _sorted_values(entry1, attr)
+        values2 = _sorted_values(entry2, attr)
 
-        if has_attr1 and has_attr2:
-            # Both entries have this attribute
-            values1 = sorted(str(v) for v in entry1[attr].values)
-            values2 = sorted(str(v) for v in entry2[attr].values)
-
-            if values1 == values2:
-                # Values are equal
-                table.add_row(attr, "\n".join(values1), "\n".join(values2), "✓ Equal")
-                equal_count += 1
-            else:
-                # Values differ
-                table.add_row(
-                    attr, "\n".join(values1), "\n".join(values2), "≠ Different"
-                )
-                diff_count += 1
-        elif has_attr1:
-            # Only first entry has this attribute
-            table.add_row(
-                attr,
-                "\n".join(str(v) for v in entry1[attr].values),
-                "",
-                "! Missing in DN 2",
+        if values1 is not None and values2 is not None:
+            kind, status = (
+                ("equal", "✓ Equal")
+                if values1 == values2
+                else ("different", "≠ Different")
             )
-            missing_count += 1
-        elif has_attr2:
-            # Only second entry has this attribute
-            table.add_row(
-                attr,
-                "",
-                "\n".join(str(v) for v in entry2[attr].values),
-                "! Missing in DN 1",
-            )
-            missing_count += 1
+        else:
+            kind = "missing"
+            status = "! Missing in DN 2" if values2 is None else "! Missing in DN 1"
+        counts[kind] += 1
+        table.add_row(
+            attr,
+            escape("\n".join(values1 or [])),
+            escape("\n".join(values2 or [])),
+            status,
+        )
 
-    # Print the comparison table
     console.print(table)
-
-    # Print summary
-    console.print("\\n[yellow]Comparison Summary:[/yellow]")
-    console.print(f"  Equal attributes: {equal_count}")
-    console.print(f"  Different attributes: {diff_count}")
-    console.print(f"  Missing attributes: {missing_count}")
+    console.print("\n[yellow]Comparison Summary:[/yellow]")
+    console.print(f"  Equal attributes: {counts['equal']}")
+    console.print(f"  Different attributes: {counts['different']}")
+    console.print(f"  Missing attributes: {counts['missing']}")
 
 
-def compare_entry(conn: Connection, dn: str, attribute: str, value: Any) -> bool:
-    """
-    Compare an attribute value in an LDAP entry.
-
-    Performs an LDAP compare operation to check if an entry has a specific
-    attribute value.
-
-    Args:
-        conn: LDAP connection object
-        dn: Distinguished name of the entry
-        attribute: Name of the attribute to compare
-        value: Value to compare against
-
-    Returns:
-        True if the values match, False otherwise
-
-    Example:
-        >>> compare_entry(conn, "uid=user,dc=example,dc=com", "mail", "user@example.com")
-    """
-    return conn.compare(dn, attribute, value)
+def _sorted_values(entry: Any, attr: str) -> Optional[List[str]]:
+    """Return the entry's values for attr as sorted text, or None if absent."""
+    if attr not in entry.entry_attributes:
+        return None
+    return sorted(str(v) for v in entry[attr].values)

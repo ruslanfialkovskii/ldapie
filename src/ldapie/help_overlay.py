@@ -15,7 +15,6 @@ In both cases, only the help is shown, and the command is not executed.
 
 Key functions:
 - show_help_overlay: Display a help overlay based on current input
-- process_help_key: Process the '?' key and determine if help overlay should be shown
 
 Example:
     >>> from help_overlay import show_help_overlay
@@ -28,10 +27,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-try:
-    from ldapie.help_context import COMMAND_PATTERNS, HelpContext
-except ImportError:
-    from src.ldapie.help_context import COMMAND_PATTERNS, HelpContext
+from .help_context import COMMAND_PATTERNS, HelpContext
 
 
 def parse_partial_command(input_text: str) -> Dict[str, Any]:
@@ -46,7 +42,7 @@ def parse_partial_command(input_text: str) -> Dict[str, Any]:
     """
     parts = input_text.strip().split()
 
-    result = {
+    result: Dict[str, Any] = {
         "full_text": input_text,
         "command": None,
         "subcommand": None,
@@ -360,91 +356,3 @@ def show_help_overlay(
         console.clear()
     console.print(panel)
     console.print(f"\nCurrent input: [command]{input_text}[/command]")
-
-    # No longer wait for user input - auto-dismisses
-    # The actual timeout implementation would be in the calling function
-
-
-def process_help_key(current_input: str, console: Console) -> None:
-    """
-    Process the '?' key and show help overlay if appropriate
-
-    Args:
-        current_input: Current input text from the command line
-        console: Rich console for output
-    """
-    # Check if the input contains a question mark (both "command?" and "command ?" formats)
-    if "?" in current_input:
-        # Remove the ? character and any surrounding whitespace
-        input_without_question = current_input.replace("?", "").strip()
-
-        # Get help context
-        help_context = HelpContext()
-
-        # Import necessary modules for auto-dismiss
-        import threading
-        import time
-
-        # Show help overlay without waiting for input
-        show_help_overlay(input_without_question, help_context, console)
-
-        # Set up a timer to auto-dismiss the overlay (in a real application)
-        # This creates a temporary overlay that will be replaced by the main UI after a delay
-        def dismiss_overlay():
-            time.sleep(5)  # Wait for 5 seconds
-            console.clear()
-            console.print(
-                f"[info]Input: [command]{input_without_question}[/command][/info]"
-            )
-
-        # Start the auto-dismiss timer in a non-blocking thread
-        threading.Thread(target=dismiss_overlay, daemon=True).start()
-
-        # Return empty string to prevent command execution after showing help
-        return ""
-
-    return current_input
-
-
-# For testing
-if __name__ == "__main__":
-    import threading
-    import time
-
-    from rich.console import Console
-
-    console = Console()
-    help_context = HelpContext()
-
-    # Test auto-dismiss functionality
-    def test_auto_dismiss():
-        # Test with a single input to demonstrate auto-dismiss
-        test_input = "search ldap.example.com"
-
-        print("Testing auto-dismiss overlay with input:", test_input)
-
-        # Get help context
-        help_context = HelpContext()
-        help_context.add_command("search ldap1.example.com dc=example,dc=com")
-        help_context.add_command("search ldap2.example.com ou=people,dc=example,dc=com")
-
-        # Show help overlay
-        show_help_overlay(test_input, help_context, console, False)
-
-        # Auto-dismiss after 5 seconds
-        def dismiss():
-            time.sleep(5)  # Wait for 5 seconds
-            console.clear()
-            console.print(
-                f"[info]Overlay auto-dismissed. Input restored: [command]{test_input}[/command][/info]"
-            )
-
-        # Start the auto-dismiss timer
-        dismiss_thread = threading.Thread(target=dismiss, daemon=True)
-        dismiss_thread.start()
-
-        # Wait for the thread to complete
-        dismiss_thread.join()
-
-    # Run the test
-    test_auto_dismiss()

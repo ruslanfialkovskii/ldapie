@@ -5,27 +5,16 @@ Demo script for LDAPie with mock LDAP server
 """
 
 import json
-import os
 import sys
 import time
 
 import ldap3
-from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-# Add the parent directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-# Import mock LDAP server and LDAPie modules
-from tests.mock_ldap import MockLdapServer
-
-try:
-    import ldapie.utils as utils
-except ImportError:
-    import src.ldapie.utils as utils
-
-console = Console()
+from .. import output, schema, search
+from ..ldapie import console
+from .mock_server import MockLdapServer
 
 
 def display_demo_header():
@@ -147,7 +136,7 @@ def basic_search_demo(conn):
     )
 
     conn.search("dc=example,dc=com", "(objectClass=*)", attributes=["*"])
-    utils.output_rich(conn.entries, console)
+    output.output_rich(conn.entries, console)
 
     pause_demo()
 
@@ -177,7 +166,7 @@ def filtered_search_demo(conn, auto_choice=None):
     )
 
     conn.search("ou=people,dc=example,dc=com", ldap_filter, attributes=["*"])
-    utils.output_rich(conn.entries, console)
+    output.output_rich(conn.entries, console)
 
     pause_demo()
 
@@ -201,22 +190,22 @@ def output_formats_demo(conn, auto_choice=None):
 
     if choice == 0:  # Rich text
         display_command("ldapie search ldap.example.com 'ou=people,dc=example,dc=com'")
-        utils.output_rich(entries, console)
+        output.output_rich(entries, console)
     elif choice == 1:  # JSON
         display_command(
             "ldapie search ldap.example.com 'ou=people,dc=example,dc=com' --json"
         )
-        utils.output_json(entries)
+        output.output_json(entries)
     elif choice == 2:  # LDIF
         display_command(
             "ldapie search ldap.example.com 'ou=people,dc=example,dc=com' --ldif"
         )
-        utils.output_ldif(entries)
+        output.output_ldif(entries)
     elif choice == 3:  # CSV
         display_command(
             "ldapie search ldap.example.com 'ou=people,dc=example,dc=com' --csv"
         )
-        utils.output_csv(entries)
+        output.output_csv(entries)
 
     pause_demo()
 
@@ -226,7 +215,7 @@ def server_info_demo(server, conn):
     section_header("Server Information")
     display_command("ldapie info ldap.example.com")
 
-    utils.output_server_info_rich(server, console)
+    schema.output_server_info_rich(server, console)
 
     pause_demo()
 
@@ -238,7 +227,7 @@ def entry_comparison_demo(conn):
         "ldapie compare ldap.example.com 'uid=jdoe,ou=people,dc=example,dc=com' 'uid=jsmith,ou=people,dc=example,dc=com'"
     )
 
-    utils.compare_entries(
+    search.compare_entries(
         conn,
         "uid=jdoe,ou=people,dc=example,dc=com",
         "uid=jsmith,ou=people,dc=example,dc=com",
@@ -255,7 +244,7 @@ def tree_view_demo(conn):
     display_command("ldapie search ldap.example.com 'dc=example,dc=com' --tree")
 
     conn.search("dc=example,dc=com", "(objectClass=*)", attributes=["*"])
-    utils.output_tree(conn.entries, "dc=example,dc=com", console)
+    output.output_tree(conn.entries, "dc=example,dc=com", console)
 
     pause_demo()
 
@@ -300,7 +289,7 @@ def advanced_operations_demo(conn, auto_choice=None):
 
         # Show the new entry
         conn.search(user_dn, "(objectClass=*)", attributes=["*"])
-        utils.output_rich(conn.entries, console)
+        output.output_rich(conn.entries, console)
 
     elif choice == 1:  # Modify an existing user
         display_command(
@@ -314,7 +303,7 @@ def advanced_operations_demo(conn, auto_choice=None):
         # Show before
         console.print("[cyan]Before modification:[/cyan]")
         conn.search(user_dn, "(objectClass=*)", attributes=["*"])
-        utils.output_rich(conn.entries, console)
+        output.output_rich(conn.entries, console)
 
         # Perform modification
         changes = {
@@ -327,7 +316,7 @@ def advanced_operations_demo(conn, auto_choice=None):
         # Show after
         console.print("[cyan]After modification:[/cyan]")
         conn.search(user_dn, "(objectClass=*)", attributes=["*"])
-        utils.output_rich(conn.entries, console)
+        output.output_rich(conn.entries, console)
 
     elif choice == 2:  # Delete a user
         display_command(
@@ -341,7 +330,7 @@ def advanced_operations_demo(conn, auto_choice=None):
         # Show entry to be deleted
         console.print("[cyan]Entry to be deleted:[/cyan]")
         conn.search(user_dn, "(objectClass=*)", attributes=["*"])
-        utils.output_rich(conn.entries, console)
+        output.output_rich(conn.entries, console)
 
         # Perform deletion
         conn.delete(user_dn)
@@ -365,7 +354,7 @@ def advanced_operations_demo(conn, auto_choice=None):
         # Show entry to be renamed
         console.print("[cyan]Entry to be renamed:[/cyan]")
         conn.search(old_dn, "(objectClass=*)", attributes=["*"])
-        utils.output_rich(conn.entries, console)
+        output.output_rich(conn.entries, console)
 
         # Perform rename
         conn.modify_dn(old_dn, new_rdn)
@@ -377,7 +366,7 @@ def advanced_operations_demo(conn, auto_choice=None):
         conn.search(
             "ou=people,dc=example,dc=com", "(uid=jsmith-renamed)", attributes=["*"]
         )
-        utils.output_rich(conn.entries, console)
+        output.output_rich(conn.entries, console)
 
     pause_demo()
 
@@ -407,7 +396,7 @@ def batch_operations_demo(conn):
 
     console.print(
         Syntax(
-            json.dumps(json_data[:2], indent=2),
+            json.dumps(json_data[:2], indent=2, default=str),
             "json",
             theme="monokai",
             line_numbers=True,
@@ -415,37 +404,24 @@ def batch_operations_demo(conn):
     )
     console.print(f"[green]✓[/green] Exported {len(json_data)} entries to JSON")
 
-    # Import from JSON demo
-    console.print("\n[bold]Importing entries from JSON:[/bold]")
-    display_command("ldapie add ldap.example.com --json new_users.json")
+    # Import from LDIF demo
+    console.print("\n[bold]Importing entries from LDIF:[/bold]")
+    display_command("ldapie import ldap.example.com new_users.ldif")
 
-    console.print("[cyan]Sample JSON for import:[/cyan]")
-    sample_json = [
-        {
-            "dn": "uid=newuser1,ou=people,dc=example,dc=com",
-            "objectClass": ["inetOrgPerson"],
-            "cn": "New User 1",
-            "sn": "User",
-            "uid": "newuser1",
-            "mail": "newuser1@example.com",
-        },
-        {
-            "dn": "uid=newuser2,ou=people,dc=example,dc=com",
-            "objectClass": ["inetOrgPerson"],
-            "cn": "New User 2",
-            "sn": "User",
-            "uid": "newuser2",
-            "mail": "newuser2@example.com",
-        },
-    ]
-    console.print(
-        Syntax(
-            json.dumps(sample_json, indent=2),
-            "json",
-            theme="monokai",
-            line_numbers=True,
-        )
+    console.print("[cyan]Sample LDIF for import:[/cyan]")
+    sample_ldif = "\n".join(
+        [
+            "version: 1",
+            "",
+            "dn: uid=newuser1,ou=people,dc=example,dc=com",
+            "objectClass: inetOrgPerson",
+            "cn: New User 1",
+            "sn: User",
+            "uid: newuser1",
+            "mail: newuser1@example.com",
+        ]
     )
+    console.print(Syntax(sample_ldif, "text", theme="monokai", line_numbers=True))
 
     pause_demo()
 
@@ -582,15 +558,15 @@ Available commands:
                     if index == 0:
                         dn = "uid=jdoe,ou=people,dc=example,dc=com"
                         conn.search(dn, "(objectClass=*)", attributes=["*"])
-                        utils.output_rich(conn.entries, console)
+                        output.output_rich(conn.entries, console)
                     elif index == 1:
                         dn = "uid=jsmith,ou=people,dc=example,dc=com"
                         conn.search(dn, "(objectClass=*)", attributes=["*"])
-                        utils.output_rich(conn.entries, console)
+                        output.output_rich(conn.entries, console)
                     elif index == 2:
                         dn = "uid=admin,ou=people,dc=example,dc=com"
                         conn.search(dn, "(objectClass=*)", attributes=["*"])
-                        utils.output_rich(conn.entries, console)
+                        output.output_rich(conn.entries, console)
                     else:
                         console.print("[red]Invalid index[/red]")
                 except ValueError:
@@ -626,13 +602,3 @@ For more information and options, run:
     ./ldapie --help
     ./ldapie search --help
     """)
-
-
-if __name__ == "__main__":
-    try:
-        run_demo()
-    except KeyboardInterrupt:
-        console.print(
-            "\n[bold green]Demo ended by user. Thanks for trying LDAPie![/bold green]"
-        )
-        sys.exit(0)

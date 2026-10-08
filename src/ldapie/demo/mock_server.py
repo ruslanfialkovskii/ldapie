@@ -4,9 +4,7 @@
 Mock LDAP server for testing and demo purposes.
 """
 
-import json
-
-from ldap3 import MOCK_SYNC, Connection, Server
+from ldap3 import MOCK_SYNC, OFFLINE_SLAPD_2_4, Connection, Server
 
 
 class MockLdapServer:
@@ -14,7 +12,8 @@ class MockLdapServer:
 
     def __init__(self):
         """Initialize the mock LDAP server with sample data"""
-        self.server = Server("ldap://mock_server")
+        # Offline OpenLDAP schema, so schema browsing works in the demo
+        self.server = Server("ldap://mock_server", get_info=OFFLINE_SLAPD_2_4)
         self.connection = Connection(
             self.server,
             user="cn=admin,dc=example,dc=com",
@@ -30,7 +29,7 @@ class MockLdapServer:
         self._add_mock_entries()
 
     def _add_mock_server_info(self):
-        """Add mock server info attributes for testing"""
+        """Describe the mock server (vendor, controls, naming contexts)"""
 
         # Create a simple object to simulate server info
         class MockServerInfo:
@@ -48,8 +47,8 @@ class MockLdapServer:
                 ]
                 self.naming_contexts = ["dc=example,dc=com"]
 
-        # Attach the mock info to the server
-        self.server._info = MockServerInfo()
+        # Replace the offline DSA info with demo-specific details
+        self.server._dsa_info = MockServerInfo()  # pylint: disable=protected-access
 
     def get_connection(self):
         """Return the mock LDAP connection"""
@@ -162,24 +161,3 @@ class MockLdapServer:
                 ],
             },
         )
-
-    def dump_to_json(self, filename="mock_ldap_data.json"):
-        """Dump the LDAP entries to a JSON file"""
-        self.connection.search("dc=example,dc=com", "(objectClass=*)", attributes=["*"])
-
-        entries = []
-        for entry in self.connection.entries:
-            entry_dict = {"dn": entry.entry_dn}
-            for attr_name in entry.entry_attributes:
-                if len(entry[attr_name].values) == 1:
-                    # Single value
-                    entry_dict[attr_name] = entry[attr_name].value
-                else:
-                    # Multi-value
-                    entry_dict[attr_name] = list(entry[attr_name].values)
-            entries.append(entry_dict)
-
-        with open(filename, "w") as f:
-            json.dump(entries, f, indent=2)
-
-        return filename

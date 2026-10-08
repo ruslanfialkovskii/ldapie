@@ -20,12 +20,15 @@ Example:
 """
 
 import json
+import shlex
 from collections import defaultdict, deque
 from difflib import get_close_matches
-from typing import Any, Dict, List
+from typing import Any, Deque, Dict, List, Optional
+
+import click
 
 # Common LDAP command patterns for analysis and suggestions
-COMMAND_PATTERNS = {
+COMMAND_PATTERNS: Dict[str, Dict[str, Any]] = {
     "search": {
         "syntax": "search <host> <base_dn> [<filter>] [options]",
         "examples": [
@@ -165,6 +168,14 @@ COMMAND_PATTERNS = {
 }
 
 
+def _split_command(command_str: str) -> List[str]:
+    """Split a command line like a shell does; fall back to whitespace."""
+    try:
+        return shlex.split(command_str)
+    except ValueError:  # e.g. an unclosed quote while still typing
+        return command_str.split()
+
+
 def _discover_commands(cli_group) -> Dict[str, Dict[str, Any]]:
     """Auto-discover commands from a Click CLI group.
 
@@ -183,16 +194,13 @@ def _discover_commands(cli_group) -> Dict[str, Dict[str, Any]]:
     try:
         for name, cmd in cli_group.commands.items():
             parts = [name]
-            # Extract arguments
+            # Positional arguments only; options are summarized as [options]
             for param in cmd.params:
-                if hasattr(param, "required") and param.required and not param.is_eager:
-                    if hasattr(param, "type") and hasattr(param, "human_readable_name"):
-                        parts.append(f"<{param.human_readable_name}>")
-                    else:
-                        parts.append(f"<{param.name}>")
-                elif not param.required and not param.is_eager:
-                    parts.append(f"[{param.name}]")
-
+                if isinstance(param, click.Argument):
+                    parts.append(
+                        f"<{param.name}>" if param.required else f"[<{param.name}>]"
+                    )
+            parts.append("[options]")
             syntax = " ".join(parts)
 
             # Merge with static patterns if available
@@ -243,8 +251,8 @@ class HelpContext:
         except ImportError:
             pass
 
-        self.command_history = deque(maxlen=20)
-        self.current_context = {
+        self.command_history: Deque[str] = deque(maxlen=20)
+        self.current_context: Dict[str, Any] = {
             "command": None,
             "subcommand": None,
             "host": None,
@@ -284,7 +292,7 @@ class HelpContext:
         self.command_history.append(command_str)
 
         # Parse command to update context
-        parts = command_str.split()
+        parts = _split_command(command_str)
         if not parts:
             return
 
@@ -340,11 +348,11 @@ class HelpContext:
 
     def update_session_state(
         self,
-        connected: bool = None,
-        authenticated: bool = None,
+        connected: Optional[bool] = None,
+        authenticated: Optional[bool] = None,
         server: Any = None,
         connection: Any = None,
-        ssl_enabled: bool = None,
+        ssl_enabled: Optional[bool] = None,
     ) -> None:
         """
         Update the current session state
@@ -385,7 +393,7 @@ class HelpContext:
         Returns:
             Dictionary with suggestions
         """
-        suggestions = {
+        suggestions: Dict[str, List[Any]] = {
             "next_commands": [],
             "examples": [],
             "tips": [],
@@ -471,7 +479,7 @@ class HelpContext:
         Returns:
             Dictionary with analysis results
         """
-        parts = command_str.split()
+        parts = _split_command(command_str)
         if not parts:
             return {"error": "Empty command"}
 
@@ -532,7 +540,7 @@ class HelpContext:
         Returns:
             Dictionary with help information
         """
-        parts = command_str.split()
+        parts = _split_command(command_str)
         if not parts:
             return {"error": "Empty command"}
 
@@ -577,7 +585,7 @@ class CommandValidator:
     without actually performing the operation.
     """
 
-    def __init__(self, help_context: HelpContext = None):
+    def __init__(self, help_context: Optional[HelpContext] = None):
         self.help_context = help_context or HelpContext()
 
     def validate_command(self, command_str: str) -> Dict[str, Any]:

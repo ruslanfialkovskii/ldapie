@@ -1,100 +1,63 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Test script for tab completion and query history in LDAPie interactive shell
+Tests for tab completion and query history in the LDAPie interactive shell.
 """
 
 import os
-import sys
+import stat
 
-from rich.console import Console
-
-# Add the src directory to the path if needed
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-try:
-    from ldapie.tab_completion import QueryHistory, TabCompletion
-except ImportError:
-    from src.ldapie.tab_completion import QueryHistory, TabCompletion
-
-# Create a console for output
-console = Console()
+from ldapie.tab_completion import QueryHistory, TabCompletion
 
 
-def test_tab_completion():
-    """Test the tab completion functionality"""
-    console.print("[bold]Testing Tab Completion[/bold]")
-    console.rule()
-
-    # Create a query history
+def test_tab_completion_uses_history():
     query_history = QueryHistory()
     query_history.add_search("(objectClass=person)")
     query_history.add_search("(uid=admin)")
     query_history.add_base("dc=example,dc=com")
     query_history.add_host("ldap.example.com")
+    completer = TabCompletion(query_history)
 
-    # Create a tab completer
-    tab_completer = TabCompletion(query_history)
-
-    # Test command completion
-    commands = tab_completer.get_commands("s")
-    console.print(f"Command completions for 's': {commands}")
-
-    # Test search filter completion
-    filters = tab_completer.get_search_filters_completion("(obj")
-    console.print(f"Filter completions for '(obj': {filters}")
-
-    # Test base DN completion
-    dns = tab_completer.get_base_dns_completion("dc=")
-    console.print(f"Base DN completions for 'dc=': {dns}")
-
-    # Test host completion
-    hosts = tab_completer.get_hosts_completion("ldap")
-    console.print(f"Host completions for 'ldap': {hosts}")
-
-    console.print("[green]✓ Tab completion tests completed[/green]")
-    console.print()
+    assert completer.get_commands("s") == ["search", "schema", "suggest"]
+    assert completer.get_search_filters_completion("(obj") == ["(objectClass=person)"]
+    assert completer.get_base_dns_completion("dc=") == ["dc=example,dc=com"]
+    assert completer.get_hosts_completion("ldap") == ["ldap.example.com"]
 
 
-def test_query_history():
-    """Test the query history functionality"""
-    console.print("[bold]Testing Query History[/bold]")
-    console.rule()
+def test_connect_completion_offers_tls_flags():
+    completer = TabCompletion(QueryHistory())
+    options = completer.complete_connect("--", "connect host --", 13, 15)
+    assert options == ["--ssl", "--starttls", "--no-verify"]
 
-    # Create a query history
+
+def test_query_history_round_trip_and_permissions(isolated_home):
     query_history = QueryHistory()
-
-    # Add some items
-    query_history.add_search("(objectClass=person)")
-    query_history.add_search("(uid=admin)")
-    query_history.add_search("(cn=*)")
-    query_history.add_base("dc=example,dc=com")
-    query_history.add_base("ou=people,dc=example,dc=com")
-    query_history.add_host("ldap.example.com")
+    for search in ("(objectClass=person)", "(uid=admin)", "(objectClass=person)"):
+        query_history.add_search(search)
     query_history.add_host("localhost")
 
-    # Test retrieval
-    console.print(f"Search filters: {query_history.get_searches()}")
-    console.print(f"Base DNs: {query_history.get_bases()}")
-    console.print(f"Hosts: {query_history.get_hosts()}")
+    # Re-adding moves an item to the end instead of duplicating it
+    assert query_history.get_searches() == ["(uid=admin)", "(objectClass=person)"]
 
-    # Test save and load
-    query_history.save_history()
+    reloaded = QueryHistory()
+    assert reloaded.get_searches() == ["(uid=admin)", "(objectClass=person)"]
+    assert reloaded.get_hosts() == ["localhost"]
 
-    # Create a new history object that should load the saved history
-    new_history = QueryHistory()
-    console.print(f"Loaded history: {new_history.get_history()}")
-
-    console.print("[green]✓ Query history tests completed[/green]")
+    path = os.path.join(str(isolated_home), ".ldapie_query_history.json")
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
 
 
-if __name__ == "__main__":
-    console.print(
-        "[bold cyan]LDAPie Tab Completion and Query History Tests[/bold cyan]"
-    )
-    console.print()
+def test_query_history_ignores_corrupt_file(isolated_home):
+    path = os.path.join(str(isolated_home), ".ldapie_query_history.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('["not", "a", "mapping"]')
+    assert QueryHistory().get_searches() == []
 
-    test_tab_completion()
-    test_query_history()
 
-    console.print("\n[bold green]All tests completed successfully![/bold green]")
+def test_query_history_keeps_last_twenty():
+    query_history = QueryHistory()
+    for i in range(25):
+        query_history.add_base(f"ou={i},dc=example,dc=com")
+    bases = query_history.get_bases()
+    assert len(bases) == 20
+    assert bases[-1] == "ou=24,dc=example,dc=com"
