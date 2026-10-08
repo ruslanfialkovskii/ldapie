@@ -7,4 +7,4 @@ It combines the simplicity of HTTPie's design with powerful LDAP functionality.
 Submodules are imported on demand; importing the package only defines the version.
 """
 
-__version__ = "0.1.4"
+__version__ = "0.2.0"
