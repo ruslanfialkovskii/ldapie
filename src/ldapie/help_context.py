@@ -27,13 +27,14 @@ from typing import (
     Optional,
 )
 
-from .utils import validate_dn, validate_search_filter
+from .utils import is_loopback_host, validate_dn, validate_search_filter
 
 # connect options: flags stand alone, valued options take the next word
-CONNECT_FLAGS = ("--ssl", "--starttls", "--no-verify")
+CONNECT_FLAGS = ("--ssl", "--starttls", "--no-verify", "--allow-plaintext")
 CONNECT_VALUE_OPTIONS = ("--ca-cert",)
 CONNECT_SYNTAX = (
-    "connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify] [--ca-cert FILE]"
+    "connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify] [--ca-cert FILE] "
+    "[--allow-plaintext]"
 )
 
 # The shell's commands: syntax, examples, next steps and common errors
@@ -53,6 +54,8 @@ COMMAND_PATTERNS: Dict[str, Dict[str, Any]] = {
         "common_errors": [
             "Without a bind DN the connection is anonymous",
             "You are prompted for the password (or set LDAP_PASSWORD)",
+            "A bind DN needs --ssl or --starttls; --allow-plaintext sends the "
+            "password in clear text",
             "--no-verify disables certificate checks; use it only for testing",
             "--ca-cert FILE verifies the server with your own CA bundle",
         ],
@@ -386,7 +389,15 @@ class CommandValidator:
             "validation": "Connect command looks valid",
             "preview": preview,
         }
-        if "--no-verify" in args.flags:
+        plaintext_bind = (
+            args.bind_dn and not args.encrypted and not is_loopback_host(args.host)
+        )
+        if plaintext_bind and "--allow-plaintext" not in args.flags:
+            result["warning"] = (
+                "The bind would be refused: the password would travel in clear text"
+            )
+            result["suggestion"] = "Add --ssl or --starttls"
+        elif "--no-verify" in args.flags:
             result["warning"] = "Certificate verification would be disabled"
         elif not args.encrypted:
             result["warning"] = "The connection would not be encrypted"

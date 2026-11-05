@@ -110,6 +110,7 @@ Every command that connects takes the same options:
 | `--starttls / --no-starttls` | Upgrade the connection with STARTTLS before binding |
 | `--verify / --no-verify` | Verify the server certificate (default: verify) |
 | `--ca-cert FILE` | PEM bundle with the CA certificates that sign the server certificate (default: the system trust store) |
+| `--allow-plaintext` | Allow a bind with `-u` without `--ssl` or `--starttls`: the password travels in clear text |
 | `--port` | Port (default: 389, or 636 with `--ssl`) |
 | `--timeout SECONDS` | Wait this long for the connection and for each server response (default: 30) |
 
@@ -118,6 +119,11 @@ travel in clear text. The server name is sent in the TLS handshake (SNI), so a
 server that hosts several names presents the right certificate. For a private
 CA, point `--ca-cert` at its bundle instead of turning verification off;
 `--no-verify` prints a warning every time it is used.
+
+A bind with `-u` over plain LDAP is refused before the password is read, so
+`LDAP_PASSWORD` never goes in clear text to a host by accident. Add `--ssl` or
+`--starttls`, or `--allow-plaintext` if the server offers neither; it prints a
+warning every time. `localhost` and loopback addresses are exempt.
 
 ### Passwords
 
@@ -249,6 +255,7 @@ Inside the shell:
 
 ```text
 connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify] [--ca-cert FILE]
+        [--allow-plaintext]
 base <dn>                          set the base DN (shown in the prompt)
 search [filter] [attribute...]     search below the base DN
 info                               server information
@@ -306,6 +313,7 @@ ca_cert: ~/corp-ca.pem           # CA bundle for certificate verification
 timeout: 30                      # seconds, connection and each response
 theme: dark                      # or light
 no_verify: false
+allow_plaintext: false           # true sends bind passwords in clear text without TLS
 ```
 
 A project file, `./.ldapie.yaml` in the current directory, may come from a

@@ -6,7 +6,7 @@ LDAP search and query related functions for LDAPie.
 
 from typing import Any, Iterator, List, Optional
 
-from ldap3 import ALL_ATTRIBUTES, BASE, Connection
+from ldap3 import ALL_ATTRIBUTES, BASE, DEREF_ALWAYS, Connection
 from rich import box
 from rich.console import Console
 from rich.markup import escape
@@ -25,6 +25,7 @@ def iter_paged_search(
     attributes,
     page_size: int,
     limit: Optional[int] = None,
+    dereference_aliases: str = DEREF_ALWAYS,
 ) -> Iterator[Any]:
     """
     Run a paged search and yield the entries page by page.
@@ -42,6 +43,7 @@ def iter_paged_search(
         attributes: List of attributes to retrieve or ALL_ATTRIBUTES
         page_size: Number of entries per page (at least 1)
         limit: Maximum number of entries to yield (None or 0 for no limit)
+        dereference_aliases: ldap3 DEREF_* mode (default: ldap3's DEREF_ALWAYS)
 
     Yields:
         LDAP entry objects
@@ -60,6 +62,7 @@ def iter_paged_search(
             base_dn,
             filter_query,
             search_scope=search_scope,
+            dereference_aliases=dereference_aliases,
             attributes=attributes,
             paged_size=size,
             paged_cookie=cookie,
@@ -96,6 +99,7 @@ def paged_search(
     attributes,
     page_size: int,
     limit: Optional[int] = None,
+    dereference_aliases: str = DEREF_ALWAYS,
 ) -> List[Any]:
     """
     Perform a paged search and return all entries as a list.
@@ -108,7 +112,14 @@ def paged_search(
     """
     return list(
         iter_paged_search(
-            conn, base_dn, filter_query, search_scope, attributes, page_size, limit
+            conn,
+            base_dn,
+            filter_query,
+            search_scope,
+            attributes,
+            page_size,
+            limit,
+            dereference_aliases,
         )
     )
 

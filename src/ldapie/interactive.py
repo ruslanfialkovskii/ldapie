@@ -82,7 +82,9 @@ class LDAPShell(cmd.Cmd):
                     readline.read_history_file(self.history_file)
                     os.chmod(self.history_file, 0o600)
             except OSError as e:
-                console.print(f"[warning]Could not read history file: {e}[/warning]")
+                console.print(
+                    f"[warning]Could not read history file: {safe_text(str(e))}[/warning]"
+                )
                 console.print("[info]History will not be saved.[/info]")
                 self.history_file = None
 
@@ -126,10 +128,15 @@ class LDAPShell(cmd.Cmd):
             return
         try:
             readline.set_history_length(1000)
-            readline.write_history_file(self.history_file)
+            # Created owner-only and tightened before the write: readline
+            # itself creates the file under the umask (often 0644)
+            os.close(os.open(self.history_file, os.O_WRONLY | os.O_CREAT, 0o600))
             os.chmod(self.history_file, 0o600)
+            readline.write_history_file(self.history_file)
         except OSError as e:
-            self.console.print(f"[warning]Could not save history: {e}[/warning]")
+            self.console.print(
+                f"[warning]Could not save history: {escape(str(e))}[/warning]"
+            )
 
     def precmd(self, line: str) -> str:
         """Show the help overlay for input ending in '?' instead of running it."""
@@ -195,7 +202,7 @@ class LDAPShell(cmd.Cmd):
         """
         Connect to an LDAP server
         Usage: connect host [port] [bind_dn] [--ssl] [--starttls] [--no-verify]
-               [--ca-cert FILE]
+               [--ca-cert FILE] [--allow-plaintext]
         """
         # Imported here: ldapie.ldapie imports this module
         from .ldapie import LdapConfig
@@ -215,6 +222,7 @@ class LDAPShell(cmd.Cmd):
             starttls="--starttls" in args.flags,
             no_verify="--no-verify" in args.flags,
             ca_cert=os.path.expanduser(args.ca_cert) if args.ca_cert else None,
+            allow_plaintext="--allow-plaintext" in args.flags,
         )
         try:
             server, conn = config.get_connection()
@@ -242,17 +250,19 @@ class LDAPShell(cmd.Cmd):
     def do_base(self, arg: str) -> None:
         """Set the base DN for operations"""
         if not arg:
-            self.console.print(f"[info]Current base DN: {self.base_dn}[/info]")
+            self.console.print(
+                f"[info]Current base DN: {safe_text(self.base_dn)}[/info]"
+            )
             return
         try:
             validate_dn(arg)
         except ValueError as e:
-            self.console.print(f"[error]{e}[/error]")
+            self.console.print(f"[error]{safe_text(str(e))}[/error]")
             return
 
         self.base_dn = arg
         self._update_prompt()
-        self.console.print(f"[info]Base DN set to: {self.base_dn}[/info]")
+        self.console.print(f"[info]Base DN set to: {safe_text(self.base_dn)}[/info]")
         self.query_history.add_base(arg)
         self.help_context.current_context["base_dn"] = arg
 
@@ -282,10 +292,14 @@ class LDAPShell(cmd.Cmd):
         try:
             validate_search_filter(filter_query)
         except ValueError as e:
-            self.console.print(f"[error]Invalid LDAP filter: {e}[/error]")
+            self.console.print(
+                f"[error]Invalid LDAP filter: {safe_text(str(e))}[/error]"
+            )
             return
 
-        self.console.print(f"[info]Searching with filter: {filter_query}[/info]")
+        self.console.print(
+            f"[info]Searching with filter: {safe_text(filter_query)}[/info]"
+        )
         try:
             entries = paged_search(
                 self.conn,
@@ -390,7 +404,7 @@ class LDAPShell(cmd.Cmd):
             table.add_column("Value", style="green")
             for history_type, (_, _, getter) in sources.items():
                 for value in getter():
-                    table.add_row(history_type, value)
+                    table.add_row(history_type, safe_text(value))
             self.console.print(table)
         elif arg in sources:
             title, column, getter = sources[arg]
@@ -398,10 +412,10 @@ class LDAPShell(cmd.Cmd):
             table.add_column("#", style="dim")
             table.add_column(column, style="green")
             for i, value in enumerate(getter(), 1):
-                table.add_row(str(i), value)
+                table.add_row(str(i), safe_text(value))
             self.console.print(table)
         else:
-            self.console.print(f"[error]Unknown history type: {arg}[/error]")
+            self.console.print(f"[error]Unknown history type: {safe_text(arg)}[/error]")
             self.console.print("[info]Available types: search, base, host[/info]")
 
     def do_help(self, arg: str) -> None:
