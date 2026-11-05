@@ -124,6 +124,10 @@ def _apply_theme(name: str) -> None:
         target.push_theme(_theme(name))
 
 
+class PlaintextBindRefused(LDAPException):
+    """A password bind would travel in clear text and was not allowed."""
+
+
 class LdapConfig:
     """
     LDAP Connection Configuration
@@ -141,6 +145,7 @@ class LdapConfig:
         starttls (bool): Whether to upgrade the connection with STARTTLS
         no_verify (bool): Whether certificate verification is disabled
         ca_cert (Optional[str]): CA bundle used to verify the server certificate
+        allow_plaintext (bool): Whether a password bind may go over plain LDAP
     """
 
     def __init__(
@@ -154,6 +159,7 @@ class LdapConfig:
         starttls: bool = False,
         no_verify: bool = False,
         ca_cert: Optional[str] = None,
+        allow_plaintext: bool = False,
     ):
         """
         Initialize LDAP connection configuration.
@@ -170,6 +176,8 @@ class LdapConfig:
             no_verify: Skip TLS certificate verification (insecure)
             ca_cert: PEM file with the CA certificates that sign the server
                 certificate (default: the system trust store)
+            allow_plaintext: Allow a password bind without SSL or STARTTLS to
+                a host other than localhost (the password travels in clear text)
         """
         self.host = host
         self.username = username
@@ -180,6 +188,7 @@ class LdapConfig:
         self.starttls = starttls
         self.no_verify = no_verify
         self.ca_cert = ca_cert
+        self.allow_plaintext = allow_plaintext
 
     def __repr__(self) -> str:
         # Never include the password: debug output prints this object
@@ -187,7 +196,28 @@ class LdapConfig:
             f"LdapConfig(host={self.host!r}, port={self.port}, "
             f"username={self.username!r}, use_ssl={self.use_ssl}, "
             f"starttls={self.starttls}, no_verify={self.no_verify}, "
-            f"ca_cert={self.ca_cert!r}, timeout={self.timeout})"
+            f"ca_cert={self.ca_cert!r}, timeout={self.timeout}, "
+            f"allow_plaintext={self.allow_plaintext})"
+        )
+
+    def _check_plaintext_bind(self) -> None:
+        """Refuse a password bind in clear text unless it stays local or was allowed.
+
+        Runs before the password is read, so LDAP_PASSWORD never reaches a
+        host over plain LDAP by accident (a second host, a typo).
+        """
+        if not self.username or self.use_ssl or self.starttls:
+            return
+        if general_utils.is_loopback_host(self.host):
+            return
+        if not self.allow_plaintext:
+            raise PlaintextBindRefused(
+                f"refusing to send the password in clear text to {self.host}: "
+                "use --ssl or --starttls, or --allow-plaintext"
+            )
+        err_console.print(
+            "[warning]Warning: the password is sent in clear text "
+            "(--allow-plaintext).[/warning]"
         )
 
     def get_connection(self, get_info: str = ALL) -> Tuple[Server, Connection]:
@@ -199,7 +229,9 @@ class LdapConfig:
         LDAP_PASSWORD or prompts for the password interactively.
 
         With STARTTLS the connection is upgraded to TLS before the bind, so
-        credentials never travel in clear text.
+        credentials never travel in clear text. A bind DN without SSL or
+        STARTTLS is refused (PlaintextBindRefused) unless the host is a
+        loopback address or allow_plaintext is set.
 
         Args:
             get_info: What to read from the server after the bind, one of the
@@ -214,6 +246,7 @@ class LdapConfig:
                 - Connection object (bound to the server)
 
         Raises:
+            PlaintextBindRefused: If the bind would send the password in clear text
             LDAPBindError: If authentication fails
             LDAPException: For other LDAP-related errors
             FileNotFoundError: If ``ca_cert`` does not exist
@@ -221,6 +254,8 @@ class LdapConfig:
         Example:
             >>> server, conn = config.get_connection()
         """
+        self._check_plaintext_bind()
+
         # Configure TLS if SSL or STARTTLS is enabled
         tls_config = None
         if self.use_ssl or self.starttls:
@@ -292,6 +327,7 @@ def _warn_if_password_on_cli(password):
 
 
 _ERROR_MESSAGES = {
+    PlaintextBindRefused: "Not connected",
     LDAPBindError: "Authentication failed",
     LDAPException: "LDAP error",
     ValueError: "Operation error (ValueError)",
@@ -362,7 +398,12 @@ def handle_connection_error(func):
         err_console.print(f"[error]{output_utils.safe_text(error_msg)}[/error]")
         if is_debug:
             err_console.print("[bold yellow]DEBUG: Stack trace[/bold yellow]")
-            err_console.print(traceback.format_exc())
+            # The trace quotes the server's message too: no markup, no escapes
+            err_console.print(
+                output_utils.sanitize_text(traceback.format_exc()),
+                markup=False,
+                highlight=False,
+            )
         sys.exit(1)
 
     return wrapper
@@ -395,6 +436,13 @@ _CONNECTION_OPTIONS = [
         help="PEM file with the CA certificates that sign the server certificate "
         "(default: the system trust store)",
     ),
+    click.option(
+        "--allow-plaintext",
+        "allow_plaintext",
+        is_flag=True,
+        help="Allow a password bind without --ssl or --starttls "
+        "(the password travels in clear text)",
+    ),
     click.option("--port", type=int, help="LDAP port (default: 389, or 636 with SSL)"),
     click.option(
         "--timeout",
@@ -425,6 +473,7 @@ def connection_options(func):
                 "starttls",
                 "verify",
                 "ca_cert",
+                "allow_plaintext",
                 "port",
                 "timeout",
             )
@@ -443,6 +492,7 @@ def connection_options(func):
         use_config("starttls", "starttls")
         use_config("verify", "no_verify", lambda no_verify: not no_verify)
         use_config("ca_cert", "ca_cert", os.path.expanduser)
+        use_config("allow_plaintext", "allow_plaintext")
         use_config("port", "port")
         use_config("timeout", "timeout")
 
@@ -474,6 +524,7 @@ def connection_options(func):
                 starttls=settings["starttls"],
                 no_verify=not settings["verify"],
                 ca_cert=settings["ca_cert"],
+                allow_plaintext=settings["allow_plaintext"],
             )
             if host
             else None
@@ -489,7 +540,9 @@ def _validate_dn_or_exit(dn: str) -> None:
     try:
         general_utils.validate_dn(dn)
     except ValueError as e:
-        err_console.print(f"[error]Invalid DN: {e}[/error]")
+        err_console.print(
+            f"[error]Invalid DN: {output_utils.safe_text(str(e))}[/error]"
+        )
         sys.exit(1)
 
 
@@ -497,7 +550,9 @@ def _validate_filter_or_exit(filter_query: str) -> None:
     try:
         general_utils.validate_search_filter(filter_query)
     except ValueError as e:
-        err_console.print(f"[error]Invalid LDAP filter: {e}[/error]")
+        err_console.print(
+            f"[error]Invalid LDAP filter: {output_utils.safe_text(str(e))}[/error]"
+        )
         sys.exit(1)
 
 
@@ -719,7 +774,10 @@ def search_command(
     search_scope = {"base": BASE, "one": LEVEL, "sub": SUBTREE}[scope]
     attributes = list(attrs) if attrs else ALL_ATTRIBUTES
 
-    err_console.print(f"[info]Searching {host} with filter: {filter_query}[/info]")
+    err_console.print(
+        f"[info]Searching {output_utils.safe_text(host)} with filter: "
+        f"{output_utils.safe_text(filter_query)}[/info]"
+    )
 
     if page_size:
         entries = search_utils.paged_search(
@@ -877,7 +935,9 @@ def add_command(host, dn, ldap_config, object_class, attr, ldif_file, json_file)
     server, conn = ldap_config.get_connection(get_info=NONE)
 
     if conn.add(dn, attributes=attributes):
-        console.print(f"[success]Successfully added entry: {dn}[/success]")
+        console.print(
+            f"[success]Successfully added entry: {output_utils.safe_text(dn)}[/success]"
+        )
     else:
         err_console.print(
             f"[error]Failed to add entry: {output_utils.safe_text(str(conn.result))}[/error]"
@@ -918,7 +978,9 @@ def delete_command(host, dn, ldap_config, recursive, yes):
         )
         sys.exit(1)
     suffix = f" ({count} entries)" if recursive else ""
-    console.print(f"[success]Successfully deleted entry: {dn}{suffix}[/success]")
+    console.print(
+        f"[success]Successfully deleted entry: {output_utils.safe_text(dn)}{suffix}[/success]"
+    )
 
 
 @cli.command("modify")
@@ -960,7 +1022,9 @@ def modify_command(host, dn, ldap_config, add, replace, delete, file):
     server, conn = ldap_config.get_connection(get_info=NONE)
 
     if conn.modify(dn, changes):
-        console.print(f"[success]Successfully modified entry: {dn}[/success]")
+        console.print(
+            f"[success]Successfully modified entry: {output_utils.safe_text(dn)}[/success]"
+        )
     else:
         err_console.print(
             f"[error]Failed to modify entry: {output_utils.safe_text(str(conn.result))}[/error]"

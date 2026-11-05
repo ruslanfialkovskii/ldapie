@@ -31,6 +31,7 @@ CONFIG_KEYS: Dict[str, type] = {
     "no_verify": bool,
     "ca_cert": str,
     "timeout": int,
+    "allow_plaintext": bool,
 }
 
 # The only keys the project-level file may set (see module docstring)...

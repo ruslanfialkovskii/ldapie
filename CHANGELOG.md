@@ -5,6 +5,20 @@ All notable changes to the LDAPie project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Security
+- A bind with a bind DN over plain LDAP (no `--ssl`, no `--starttls`) is refused before the password is read: it used to send the password, including one picked up silently from `LDAP_PASSWORD`, in clear text to whatever host was named. `--allow-plaintext` (and `allow_plaintext: true` in the user config file, or `connect ... --allow-plaintext` in the shell) allows it with a warning; `localhost` and loopback addresses are exempt. The project config file cannot set it.
+- `delete --recursive` no longer follows aliases while listing the subtree, and refuses to delete anything when the listing returns an entry outside the DN it was given. On servers with aliases (OpenLDAP) an alias could make it delete entries elsewhere in the directory.
+- The `--debug` stack trace is printed without Rich markup and with control characters escaped, like other text that quotes the server.
+- The shell history file is created readable by its owner only before readline writes to it, instead of being tightened after the write.
+- Host names, filters, DNs and history entries typed by the user are escaped before they are printed, so `[...]` in them is shown as typed.
+- CI installs an exact uv version (0.12.24) instead of the newest 0.12 release.
+- `pyasn1>=0.6.5` is now required: 0.6.4 is affected by CVE-2026-119194 to CVE-2026-119197. The lockfile also moves certifi to 2026.10.23 (PYSEC-2026-4320) and, on Python 3.11 and later, filelock to 4.2.1; filelock is only a pip-audit dependency and has no fixed release for Python 3.10, so the CI audit runs on Python 3.13.
+
+### Added
+- `--allow-plaintext` connection option and `allow_plaintext` user config key.
+
 ## 0.3.0 (2026-10-08)
 
 ### Security

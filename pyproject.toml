@@ -29,10 +29,10 @@ classifiers = [
 ]
 dependencies = [
     "ldap3>=2.9,<3.0",
-    # ldap3 only asks for pyasn1>=0.4.6. pyasn1 decodes every server response, and
-    # versions before 0.6.4 can be made to hang by a hostile server (CVE-2026-30922,
-    # CVE-2026-59884, CVE-2026-59885, CVE-2026-59886).
-    "pyasn1>=0.6.4",
+    # ldap3 asks for a far older pyasn1. pyasn1 decodes every server response, and
+    # older releases can be made to hang by a hostile server: the floor is the first
+    # release without the decoder CVEs listed in CHANGELOG.md.
+    "pyasn1>=0.6.5",
     "rich>=12.0.0",
     "click>=8.0",
     "pyyaml>=6.0",

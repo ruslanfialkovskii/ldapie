@@ -4,10 +4,21 @@
 General utility functions for LDAPie: input validation and argument parsing.
 """
 
+import ipaddress
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import ldap3
 from ldap3.utils.dn import parse_dn
+
+
+def is_loopback_host(host: str) -> bool:
+    """True for localhost and loopback addresses: the password stays on this machine."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
 
 
 def validate_search_filter(filter_str: str) -> bool:
