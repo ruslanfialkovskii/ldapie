@@ -5,7 +5,7 @@ All notable changes to the LDAPie project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.4.0 (2026-11-05)
 
 ### Security
 - A bind with a bind DN over plain LDAP (no `--ssl`, no `--starttls`) is refused before the password is read: it used to send the password, including one picked up silently from `LDAP_PASSWORD`, in clear text to whatever host was named. `--allow-plaintext` (and `allow_plaintext: true` in the user config file, or `connect ... --allow-plaintext` in the shell) allows it with a warning; `localhost` and loopback addresses are exempt. The project config file cannot set it.
