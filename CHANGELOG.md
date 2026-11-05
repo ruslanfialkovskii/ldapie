@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The shell history file is created readable by its owner only before readline writes to it, instead of being tightened after the write.
 - Host names, filters, DNs and history entries typed by the user are escaped before they are printed, so `[...]` in them is shown as typed.
 - CI installs an exact uv version (0.12.24) instead of the newest 0.12 release.
+- `pyasn1>=0.6.5` is now required: 0.6.4 is affected by CVE-2026-119194 to CVE-2026-119197. The lockfile also moves certifi to 2026.10.23 (PYSEC-2026-4320) and, on Python 3.11 and later, filelock to 4.2.1; filelock is only a pip-audit dependency and has no fixed release for Python 3.10, so the CI audit runs on Python 3.13.
 
 ### Added
 - `--allow-plaintext` connection option and `allow_plaintext` user config key.

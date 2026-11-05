@@ -34,7 +34,10 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.24"
-          python-version: '3.10'
+          # mypy and ruff check for 3.10 themselves (mypy.ini, pyproject). The
+          # audit covers the newest supported Python: filelock, a pip-audit
+          # dependency only, has no fixed release for 3.10
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install locked dependencies
