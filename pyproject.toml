@@ -46,7 +46,7 @@ test = [
 dev = [
     "ldapie[test]",
     # Pinned to a minor version: ruff's formatting style changes between minors and CI checks it
-    "ruff>=0.16,<0.17",
+    "ruff>=0.16,<0.18",
     "mypy>=1.8.0",
     "types-PyYAML>=6.0.0",
     # Locked here (not fetched with uvx at run time) so CI and releases use reviewed versions
