@@ -3,7 +3,7 @@
 # line is what Dependabot tracks.
 FROM ghcr.io/astral-sh/uv:0.12.0@sha256:606e70c71c852d03f611b1e56a195d08648507018a7057fab82c4974c4eae105 AS uv
 
-FROM python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f AS build
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS build
 
 COPY --from=uv /uv /bin/uv
 WORKDIR /app
@@ -20,7 +20,7 @@ COPY README.md LICENSE ./
 COPY src/ src/
 RUN uv sync --frozen --no-dev --no-editable
 
-FROM python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 LABEL maintainer="LDAPie Project"
 LABEL description="Modern LDAP client command-line interface tool inspired by HTTPie"
